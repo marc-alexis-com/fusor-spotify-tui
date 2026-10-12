@@ -65,6 +65,8 @@ pub(crate) struct Jukebox {
     /// The URL of the cover the terminal shows, once it is there.
     cover: Signal<Option<String>>,
     help: Signal<bool>,
+    /// Whether a shelf has the focus, which outlines the sidebar.
+    shelves_focused: Signal<bool>,
     notice: Signal<Option<Notice>>,
     root: RefCell<Option<Node>>,
     saved_login: RefCell<Option<String>>,
@@ -97,6 +99,7 @@ impl FromInputs for Jukebox {
             bar_width: signal(0),
             cover: signal(None),
             help: signal(false),
+            shelves_focused: signal(false),
             notice: signal(None),
             root: RefCell::new(None),
             saved_login: RefCell::new(startup.refresh_token),
