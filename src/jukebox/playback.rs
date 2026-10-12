@@ -2,7 +2,8 @@ use super::{Jukebox, listing::duration};
 use crate::{
     cover,
     spotify::{
-        Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker, Track,
+        Album, Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker,
+        Track,
     },
 };
 use hypercmd::{Error, Event, EventPayload};
@@ -110,9 +111,9 @@ impl NowPlaying {
     }
 
     /// Adds the details of `uri`, unless another track started meanwhile.
-    fn describe(&mut self, uri: &str, track: Option<Track>) {
+    fn describe(&mut self, uri: &str, track: Track) {
         if self.uri.as_deref() == Some(uri) {
-            self.track = track.map(Rc::new);
+            self.track = Some(Rc::new(track));
         }
     }
 
@@ -162,7 +163,18 @@ impl Jukebox {
             PlayerEvent::TrackChanged { audio_item } => {
                 let covers = audio_item.covers.iter();
                 let cover = cover::pick(covers.map(|image| (image.width, image.url.as_str())));
-                self.change_track(audio_item.uri, cover);
+                // What the player knows, for when the catalog cannot describe the track.
+                let fallback = Track {
+                    uri: audio_item.uri.clone(),
+                    name: audio_item.name,
+                    artists: Vec::new(),
+                    album: Album {
+                        uri: String::new(),
+                        name: String::new(),
+                    },
+                    duration_ms: u64::from(audio_item.duration_ms),
+                };
+                self.change_track(audio_item.uri, cover, fallback);
             }
             PlayerEvent::Playing { position_ms, .. } => {
                 self.now.update(|now| now.report(position_ms, true));
@@ -199,20 +211,26 @@ impl Jukebox {
         }
     }
 
-    fn change_track(self: &Rc<Self>, uri: String, cover: Option<String>) {
+    fn change_track(self: &Rc<Self>, uri: String, cover: Option<String>, fallback: Track) {
         let known = self.now.update(|now| now.start(&uri));
         self.change_cover(&uri, cover);
         if known {
             return;
         }
         let Some(catalog) = self.catalog() else {
+            self.now.update(|now| now.describe(&uri, fallback));
             return;
         };
         let now = self.now.clone();
         let started = self.spawn(async move {
-            let track = catalog.tracks(vec![uri.clone()]).await?.into_iter().next();
-            now.update(|now| now.describe(&uri, track));
-            Ok(())
+            // A failed or empty answer would otherwise leave "Loading…" for the whole track.
+            let found = catalog.tracks(vec![uri.clone()]).await;
+            let track = found
+                .as_ref()
+                .ok()
+                .and_then(|tracks| tracks.first().cloned());
+            now.update(|now| now.describe(&uri, track.unwrap_or(fallback)));
+            found.map(drop)
         });
         if let Err(error) = started {
             self.warn(error.to_string());
@@ -374,7 +392,7 @@ impl Jukebox {
 
     pub(super) fn track_details(&self) -> String {
         self.now.with(|now| match &now.track {
-            Some(track) => format!("{} · {}", track.artist_names(), track.album.name),
+            Some(track) => details(track),
             None => format!("Choose a track and press Enter · plays here as “{DEVICE_NAME}”"),
         })
     }
@@ -471,6 +489,15 @@ impl Jukebox {
     }
 }
 
+/// The player alone names neither the artists nor the album.
+fn details(track: &Track) -> String {
+    [track.artist_names(), track.album.name.clone()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn label(length: Duration) -> String {
     // Saturates only past 584 million years.
     duration(length.as_millis().try_into().unwrap_or(u64::MAX))
@@ -478,8 +505,8 @@ fn label(length: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{NowPlaying, Repeat};
-    use crate::spotify::{Album, Track};
+    use super::{Album, NowPlaying, Repeat, Track, details};
+    use crate::spotify::Artist;
     use std::time::Duration;
 
     #[test]
@@ -529,11 +556,32 @@ mod tests {
         };
         let mut now = NowPlaying::default();
         assert!(!now.start("spotify:track:one"));
-        now.describe("spotify:track:one", Some(track));
+        now.describe("spotify:track:one", track);
         assert!(now.start("spotify:track:one"));
         assert!(now.track.is_some());
         assert!(!now.start("spotify:track:two"));
         assert!(now.track.is_none());
+    }
+
+    #[test]
+    fn details_leave_out_what_is_unknown() {
+        let mut track = Track {
+            uri: "spotify:episode:one".into(),
+            name: "One".into(),
+            artists: Vec::new(),
+            album: Album {
+                uri: String::new(),
+                name: String::new(),
+            },
+            duration_ms: 1_000,
+        };
+        assert_eq!(details(&track), "");
+        track.artists.push(Artist {
+            uri: "spotify:artist:one".into(),
+            name: "Band".into(),
+        });
+        track.album.name = "Record".into();
+        assert_eq!(details(&track), "Band · Record");
     }
 
     #[test]
