@@ -1,7 +1,7 @@
 //! Publishes the speaker on the session bus as an MPRIS player, so `playerctl`,
 //! media keys and status bars can control it.
 
-use super::DEVICE_NAME;
+use super::{DEVICE_NAME, INITIAL_VOLUME};
 use librespot_connect::Spirc;
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
@@ -78,17 +78,31 @@ async fn announce(player: &InterfaceRef<Player>, change: Change) -> zbus::Result
     let player = player.get().await;
     match change {
         Change::Nothing => Ok(()),
-        // CanSeek depends on having a track; clients cache it, so it is announced too.
+        // The Can* properties depend on having a track; clients cache them.
         Change::Track => {
             player.metadata_changed(emitter).await?;
-            player.can_seek_changed(emitter).await
+            controls_changed(&player, emitter).await
         }
+        Change::Control => controls_changed(&player, emitter).await,
         Change::Status => player.playback_status_changed(emitter).await,
+        // A track that starts part way through, or a stop, moves the position too.
+        Change::StatusAt(position) => {
+            player.playback_status_changed(emitter).await?;
+            Player::seeked(emitter, position).await
+        }
         Change::Volume => player.volume_changed(emitter).await,
         Change::Shuffle => player.shuffle_changed(emitter).await,
         Change::Loop => player.loop_status_changed(emitter).await,
         Change::Position(position) => Player::seeked(emitter, position).await,
     }
+}
+
+async fn controls_changed(player: &Player, emitter: &SignalEmitter<'_>) -> zbus::Result<()> {
+    player.can_play_changed(emitter).await?;
+    player.can_pause_changed(emitter).await?;
+    player.can_go_next_changed(emitter).await?;
+    player.can_go_previous_changed(emitter).await?;
+    player.can_seek_changed(emitter).await
 }
 
 /// The track details MPRIS clients show.
@@ -184,6 +198,8 @@ impl Track {
 /// What the player reports, kept for clients that ask.
 #[derive(Debug)]
 struct Now {
+    /// Whether this is Spotify's active device; librespot ignores commands otherwise.
+    active: bool,
     track: Option<Track>,
     status: Status,
     position: Duration,
@@ -213,20 +229,24 @@ enum Change {
     Nothing,
     Track,
     Status,
+    StatusAt(i64),
     Volume,
     Shuffle,
     Loop,
+    Control,
     Position(i64),
 }
 
 impl Default for Now {
     fn default() -> Self {
         Self {
+            active: false,
             track: None,
             status: Status::Stopped,
             position: Duration::ZERO,
             reported: Instant::now(),
-            volume: u16::MAX / 2,
+            // librespot sets the mixer to this at startup without reporting it.
+            volume: INITIAL_VOLUME,
             shuffle: false,
             repeat: Loop::Off,
         }
@@ -269,14 +289,32 @@ impl Now {
                 };
                 Change::Loop
             }
+            PlayerEvent::SessionConnected { .. } => {
+                self.active = true;
+                Change::Control
+            }
+            PlayerEvent::SessionDisconnected { .. } => {
+                self.active = false;
+                Change::Control
+            }
             _ => Change::Nothing,
         }
     }
 
+    /// Whether librespot acts on playback commands rather than dropping them.
+    fn controllable(&self) -> bool {
+        self.active && self.track.is_some()
+    }
+
     fn play(&mut self, status: Status, position_ms: u32) -> Change {
+        let expected = self.elapsed();
         self.status = status;
         self.report(position_ms);
-        Change::Status
+        if expected.abs_diff(self.position) > JUMP {
+            Change::StatusAt(micros(self.position))
+        } else {
+            Change::Status
+        }
     }
 
     fn report(&mut self, position_ms: u32) {
@@ -360,7 +398,13 @@ impl Player {
     }
 
     fn stop(&self) -> fdo::Result<()> {
-        failed(self.spirc.pause())
+        // librespot has no stop that keeps the device active; MPRIS asks that a
+        // later Play start over, so the paused track rewinds. Spirc runs both in order.
+        failed(
+            self.spirc
+                .pause()
+                .and_then(|()| self.spirc.set_position_ms(0)),
+        )
     }
 
     fn play(&self) -> fdo::Result<()> {
@@ -368,7 +412,14 @@ impl Player {
     }
 
     fn seek(&self, offset: i64) -> fdo::Result<()> {
+        let Some(track) = &self.now.track else {
+            return Ok(());
+        };
         let target = micros(self.now.elapsed()).saturating_add(offset).max(0);
+        // MPRIS asks that seeking past the end act like Next; librespot would ignore it.
+        if target > micros(track.length) {
+            return failed(self.spirc.next());
+        }
         self.go_to(target)
     }
 
@@ -491,27 +542,27 @@ impl Player {
 
     #[zbus(property)]
     fn can_go_next(&self) -> bool {
-        true
+        self.now.controllable()
     }
 
     #[zbus(property)]
     fn can_go_previous(&self) -> bool {
-        true
+        self.now.controllable()
     }
 
     #[zbus(property)]
     fn can_play(&self) -> bool {
-        true
+        self.now.controllable()
     }
 
     #[zbus(property)]
     fn can_pause(&self) -> bool {
-        true
+        self.now.controllable()
     }
 
     #[zbus(property)]
     fn can_seek(&self) -> bool {
-        self.now.track.is_some()
+        self.now.controllable()
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -529,6 +580,9 @@ impl Player {
 }
 
 const MICROS_PER_MILLI: i64 = 1000;
+/// How far a reported position may stray from the expected one before clients
+/// are told it jumped; events reach us a few milliseconds late.
+const JUMP: Duration = Duration::from_secs(1);
 
 fn micros(duration: Duration) -> i64 {
     // Saturates only past 292 thousand years.
@@ -606,5 +660,39 @@ mod tests {
             Change::Volume
         );
         assert_eq!(now.volume, 7);
+    }
+
+    #[test]
+    fn controls_need_the_active_device_and_a_track() {
+        let mut now = Now::default();
+        let connected = PlayerEvent::SessionConnected {
+            connection_id: String::new(),
+            user_name: String::new(),
+        };
+        assert_eq!(now.apply(connected), Change::Control);
+        assert!(!now.controllable());
+        now.track = Some(track());
+        assert!(now.controllable());
+        let disconnected = PlayerEvent::SessionDisconnected {
+            connection_id: String::new(),
+            user_name: String::new(),
+        };
+        assert_eq!(now.apply(disconnected), Change::Control);
+        assert!(!now.controllable());
+    }
+
+    #[test]
+    fn tracks_starting_part_way_through_announce_the_position() {
+        let mut now = Now::default();
+        let uri = track().uri;
+        now.track = Some(track());
+        let playing = |position_ms| PlayerEvent::Playing {
+            play_request_id: 0,
+            track_id: librespot_core::SpotifyUri::from_uri(&uri)
+                .expect("the test track URI is valid"),
+            position_ms,
+        };
+        assert_eq!(now.apply(playing(90_000)), Change::StatusAt(90_000_000));
+        assert_eq!(now.apply(playing(90_000)), Change::Status);
     }
 }
