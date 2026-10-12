@@ -7,7 +7,7 @@ mod speaker;
 
 pub(crate) use auth::{Authorization, Token, forget, stored_refresh_token};
 pub(crate) use catalog::{Catalog, search_uri};
-pub(crate) use model::{Album, Artist, Playlist, Repeat, Track};
+pub(crate) use model::{Album, Artist, LibraryEntry, LibraryItem, Playlist, Repeat, Track};
 pub(crate) use speaker::{
     Command, Connection, DEVICE_NAME, Events, INITIAL_VOLUME, Lost, Mode, Play, Speaker,
 };

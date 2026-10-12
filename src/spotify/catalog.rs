@@ -1,4 +1,4 @@
-use super::{Album, Artist, Error, Playlist, Track};
+use super::{Album, Artist, Error, LibraryEntry, LibraryItem, Playlist, Track};
 use http::Method;
 use librespot_core::{Session, SpotifyUri};
 use librespot_protocol::{
@@ -12,11 +12,16 @@ use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
+    rc::Rc,
 };
 
 const ROOTLIST_LENGTH: usize = 1000;
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
+/// Folders appear in the rootlist as a start marker, their contents, then an end marker.
+const FOLDER_START: &str = "spotify:start-group:";
+const FOLDER_END: &str = "spotify:end-group:";
+const UNNAMED_FOLDER: &str = "Untitled folder";
 const SEARCH_PREFIX: &str = "spotify:search:";
 const STATUS_OK: i32 = 200;
 
@@ -47,9 +52,10 @@ impl Catalog {
         format!("spotify:user:{}:collection", self.session.username())
     }
 
-    pub(crate) async fn playlists(&self) -> Result<Vec<Playlist>, Error> {
+    /// The playlists and folders of the library, folders included in place.
+    pub(crate) async fn library(&self) -> Result<Vec<LibraryEntry>, Error> {
         let session = self.session.clone();
-        run(async move {
+        let entries = run(async move {
             let bytes = session
                 .spclient()
                 .get_rootlist(0, Some(ROOTLIST_LENGTH))
@@ -60,16 +66,11 @@ impl Catalog {
                 .items
                 .iter()
                 .zip(&contents.meta_items)
-                .filter(|(item, _)| item.uri().starts_with(PLAYLIST_PREFIX))
-                .filter_map(|(item, meta)| {
-                    Some(Playlist {
-                        uri: item.uri().to_owned(),
-                        name: meta.attributes.name.clone()?,
-                    })
-                })
-                .collect())
+                .map(|(item, meta)| (item.uri().to_owned(), meta.attributes.name.clone()))
+                .collect::<Vec<_>>())
         })
-        .await
+        .await?;
+        Ok(library_entries(entries))
     }
 
     /// The tracks of a playlist, album, artist, the liked songs or a search.
@@ -162,6 +163,62 @@ async fn run<T: Send + 'static>(
     tokio::spawn(task).await?
 }
 
+/// Nests the rootlist's playlists in the folders its start and end markers delimit.
+fn library_entries(items: Vec<(String, Option<String>)>) -> Vec<LibraryEntry> {
+    let mut folders: Vec<String> = Vec::new();
+    let mut entries = Vec::new();
+    for (uri, name) in items {
+        if let Some(folder) = uri.strip_prefix(FOLDER_START) {
+            let (id, encoded) = folder.split_once(':').unwrap_or((folder, ""));
+            let name = decode_name(encoded);
+            entries.push(LibraryEntry {
+                item: LibraryItem::Folder {
+                    id: id.to_owned(),
+                    name: if name.is_empty() {
+                        UNNAMED_FOLDER.into()
+                    } else {
+                        name
+                    },
+                },
+                folders: folders.clone(),
+            });
+            folders.push(id.to_owned());
+        } else if uri.starts_with(FOLDER_END) {
+            folders.pop();
+        } else if uri.starts_with(PLAYLIST_PREFIX)
+            && let Some(name) = name
+        {
+            entries.push(LibraryEntry {
+                item: LibraryItem::Playlist(Rc::new(Playlist { uri, name })),
+                folders: folders.clone(),
+            });
+        }
+    }
+    entries
+}
+
+/// Folder names are URL-encoded in their marker, with `+` for spaces.
+fn decode_name(encoded: &str) -> String {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let escaped = encoded
+            .get(index + 1..index + 3)
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match (byte, escaped) {
+            (b'+', _) => decoded.push(b' '),
+            (b'%', Some(value)) => {
+                decoded.push(value);
+                index += 2;
+            }
+            _ => decoded.push(byte),
+        }
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
 fn unique_tracks(uris: impl Iterator<Item = String>) -> Vec<String> {
     let mut seen = HashSet::new();
     uris.filter(|uri| uri.starts_with(TRACK_PREFIX) && seen.insert(uri.clone()))
@@ -205,6 +262,60 @@ fn track(uri: &str, message: &metadata::Track) -> Result<Track, Error> {
 #[cfg(test)]
 mod tests {
     use super::{search_uri, unique_tracks};
+    use crate::spotify::{LibraryEntry, LibraryItem};
+
+    fn entry(uri: &str, name: Option<&str>) -> (String, Option<String>) {
+        (uri.to_owned(), name.map(str::to_owned))
+    }
+
+    #[test]
+    fn folder_names_are_decoded() {
+        assert_eq!(
+            super::decode_name(
+                "%CF%88%CF%85%CF%87%CE%B5%CE%B4%CE%B5%CE%BB%CE%B9%CE%BA%CF%8C%CF%82"
+            ),
+            "ψυχεδελικός"
+        );
+        assert_eq!(super::decode_name("Road+trip%21"), "Road trip!");
+        assert_eq!(super::decode_name("100%"), "100%");
+    }
+
+    #[test]
+    fn playlists_nest_in_their_folders() {
+        let entries = super::library_entries(vec![
+            entry("spotify:playlist:a", Some("A")),
+            entry("spotify:start-group:f1:Outer", None),
+            entry("spotify:playlist:b", Some("B")),
+            entry("spotify:start-group:f2:", None),
+            entry("spotify:playlist:c", Some("C")),
+            entry("spotify:end-group:f2", None),
+            entry("spotify:end-group:f1", None),
+            entry("spotify:playlist:d", Some("D")),
+            entry("spotify:playlist:unnamed", None),
+        ]);
+        let summary: Vec<(String, Vec<String>)> = entries
+            .iter()
+            .map(|LibraryEntry { item, folders }| {
+                let name = match item {
+                    LibraryItem::Playlist(playlist) => playlist.name.clone(),
+                    LibraryItem::Folder { name, .. } => format!("[{name}]"),
+                };
+                (name, folders.clone())
+            })
+            .collect();
+        let path = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            vec![
+                ("A".into(), path(&[])),
+                ("[Outer]".into(), path(&[])),
+                ("B".into(), path(&["f1"])),
+                ("[Untitled folder]".into(), path(&["f1"])),
+                ("C".into(), path(&["f1", "f2"])),
+                ("D".into(), path(&[])),
+            ]
+        );
+    }
 
     #[test]
     fn search_uris_encode_the_query() {

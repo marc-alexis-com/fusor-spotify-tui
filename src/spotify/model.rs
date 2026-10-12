@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Artist {
     pub(crate) uri: String,
@@ -23,6 +25,21 @@ pub(crate) struct Track {
 pub(crate) struct Playlist {
     pub(crate) uri: String,
     pub(crate) name: String,
+}
+
+/// A playlist or a folder of the user's library.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum LibraryItem {
+    Playlist(Rc<Playlist>),
+    Folder { id: String, name: String },
+}
+
+/// One entry of the library, in the order Spotify shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LibraryEntry {
+    pub(crate) item: LibraryItem,
+    /// The IDs of the folders it sits in, outermost first.
+    pub(crate) folders: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

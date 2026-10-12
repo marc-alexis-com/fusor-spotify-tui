@@ -1,4 +1,8 @@
-use super::{Jukebox, Screen, playback::VolumeStep};
+use super::{
+    Jukebox, Screen,
+    library::{FIXED_SHELVES, ShelfRow, ShelfTarget},
+    playback::VolumeStep,
+};
 use crate::spotify::Command;
 use hypercmd::{Error, ErrorKind, Event, EventPayload, Input, Key, Node};
 use std::rc::Rc;
@@ -67,7 +71,8 @@ impl Jukebox {
         }
         match key {
             Key::Tab if !modifiers.shift => self.focus("tracks"),
-            Key::Char('l') => self.focus("tracks"),
+            Key::Char('l') => self.shelf_right(&event.target),
+            Key::Char('h') => self.shelf_left(&event.target),
             Key::Char('j') => self.step_shelf(&event.target, true),
             Key::Char('k') => self.step_shelf(&event.target, false),
             _ => return,
@@ -86,6 +91,46 @@ impl Jukebox {
         if let Some(shelf) = current.or(shelves.first()) {
             shelf.request_focus();
         }
+    }
+
+    /// The playlist-section row of a sidebar button, if it is one.
+    fn shelf_row(&self, button: &Node) -> Option<(Vec<Rc<ShelfRow>>, usize)> {
+        let index = self.shelves().iter().position(|shelf| shelf == button)?;
+        let rows = fusor::untrack(|| self.shelf_rows());
+        let row = index.checked_sub(FIXED_SHELVES)?;
+        (row < rows.len()).then_some((rows, row))
+    }
+
+    /// `l` opens a closed folder; anywhere else it goes to the track list.
+    fn shelf_right(&self, button: &Node) {
+        if let Some((rows, index)) = self.shelf_row(button)
+            && let ShelfTarget::Folder { id, open: false } = &rows[index].target
+        {
+            self.set_folder(id, true);
+            return;
+        }
+        self.focus("tracks");
+    }
+
+    /// `h` closes an open folder, or goes up to the folder around the row and closes it.
+    fn shelf_left(&self, button: &Node) {
+        let Some((rows, index)) = self.shelf_row(button) else {
+            return;
+        };
+        if let ShelfTarget::Folder { id, open: true } = &rows[index].target {
+            self.set_folder(id, false);
+            return;
+        }
+        let Some(parent) = rows[index].parent.clone() else {
+            return;
+        };
+        let key = format!("folder:{parent}");
+        if let Some(position) = rows.iter().position(|row| row.key == key)
+            && let Some(folder) = self.shelves().get(FIXED_SHELVES + position)
+        {
+            folder.request_focus();
+        }
+        self.set_folder(&parent, false);
     }
 
     fn step_shelf(&self, from: &Node, down: bool) {

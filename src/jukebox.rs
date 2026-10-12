@@ -1,19 +1,20 @@
 mod browse;
 mod keys;
+mod library;
 mod listing;
 mod playback;
 mod session;
 mod view;
 
-use crate::spotify::{self, Catalog, Playlist, Speaker};
+use crate::spotify::{self, Catalog, LibraryEntry, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
 use hypercmd::{Error, Node, Services};
 use listing::{Listing, Source, Window};
 use playback::NowPlaying;
 use std::{
     cell::{Cell, RefCell},
+    collections::HashSet,
     future::Future,
-    rc::Rc,
 };
 
 /// How long a notice stays on screen, in clock ticks.
@@ -53,7 +54,9 @@ pub(crate) struct Jukebox {
     speaker: RefCell<Option<Speaker>>,
     catalog: RefCell<Option<Catalog>>,
     screen: Signal<Screen>,
-    playlists: Signal<Vec<Rc<Playlist>>>,
+    library: Signal<Vec<LibraryEntry>>,
+    /// IDs of the library folders the sidebar shows open.
+    open_folders: Signal<HashSet<String>>,
     listing: Signal<Listing>,
     window: Signal<Window>,
     history: RefCell<Vec<(Listing, Window)>>,
@@ -88,7 +91,8 @@ impl FromInputs for Jukebox {
             speaker: RefCell::new(None),
             catalog: RefCell::new(None),
             screen: signal(screen),
-            playlists: signal(Vec::new()),
+            library: signal(Vec::new()),
+            open_folders: signal(HashSet::new()),
             listing: signal(Listing::new(Source::Liked)),
             window: signal(Window::default()),
             history: RefCell::new(Vec::new()),

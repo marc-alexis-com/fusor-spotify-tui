@@ -10,11 +10,12 @@
             on:click="state.jukebox.open_shelf(Source::Recent)">◷ Recently played</button>
     <p class="pane-title playlists-title">PLAYLISTS</p>
     <div id="playlists">
-      <ForEach items="{{ state.jukebox.playlists.get() }}" key="{{ |playlist| playlist.uri.clone() }}">
+      <ForEach items="{{ state.jukebox.shelf_rows() }}" key="{{ |row| row.key.clone() }}">
         <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)"
-                class:current="{{ state.jukebox.is_current(&Source::Playlist(item.get())) }}"
-                on:click="state.jukebox.open_shelf(Source::Playlist(item.get()))">{{
-          item.get().name.clone()
+                class:folder="{{ item.get().is_folder() }}"
+                class:current="{{ item.get().current }}"
+                on:click="state.jukebox.choose_shelf(&item.get())">{{
+          item.get().label.clone()
         }}</button>
       </ForEach>
     </div>

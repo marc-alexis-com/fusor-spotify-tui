@@ -124,10 +124,9 @@ impl Jukebox {
         let Some(catalog) = self.catalog() else {
             return;
         };
-        let playlists = self.playlists.clone();
+        let library = self.library.clone();
         let started = self.spawn(async move {
-            let loaded = catalog.playlists().await?;
-            playlists.set(loaded.into_iter().map(Rc::new).collect());
+            library.set(catalog.library().await?);
             Ok(())
         });
         if let Err(error) = started {
