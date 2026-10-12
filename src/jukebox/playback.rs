@@ -2,7 +2,8 @@ use super::{Jukebox, listing::duration};
 use crate::{
     cover,
     spotify::{
-        Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker, Track,
+        Album, Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker,
+        Track,
     },
 };
 use hypercmd::{Error, Event, EventPayload};
@@ -27,6 +28,11 @@ const EQUALIZER_SPREAD: usize = 5;
 #[derive(Clone, PartialEq)]
 pub(super) struct NowPlaying {
     uri: Option<String>,
+    /// The track librespot was asked to play, which `uri` names differently when
+    /// Spotify relinks it to a playable copy.
+    requested: Option<String>,
+    /// The track librespot is loading, which only becomes `uri` once it starts.
+    loading: Option<String>,
     track: Option<Rc<Track>>,
     playing: bool,
     /// librespot ignores Resume once stopped, after the end of a list or `p` on its first track.
@@ -48,6 +54,8 @@ impl Default for NowPlaying {
     fn default() -> Self {
         Self {
             uri: None,
+            requested: None,
+            loading: None,
             track: None,
             playing: false,
             stopped: false,
@@ -68,10 +76,54 @@ impl NowPlaying {
         self.stopped = false;
     }
 
+    /// librespot rewinds a stopped track to its start; the last report may be
+    /// anywhere in it, such as where it last resumed.
+    fn stop(&mut self) {
+        self.report(0, false);
+        self.stopped = true;
+    }
+
+    /// librespot turns repeat-one off on a skip without a RepeatChanged event;
+    /// repeating the list is left as it was.
+    fn skip(&mut self) {
+        if self.repeat == Repeat::Track {
+            self.repeat = Repeat::Context;
+        }
+    }
+
+    /// Switches to `uri`; returns whether its details are already known, as
+    /// when repeat-one starts the same track again.
+    fn start(&mut self, uri: &str) -> bool {
+        self.loading = None;
+        self.stopped = false;
+        if self.uri.as_deref() == Some(uri) && self.track.is_some() {
+            return true;
+        }
+        self.uri = Some(uri.to_owned());
+        self.requested = None;
+        self.track = None;
+        false
+    }
+
+    /// The playing track as lists name it.
+    fn listed_uri(&self) -> Option<String> {
+        self.requested.clone().or_else(|| self.uri.clone())
+    }
+
+    /// librespot also reports the next track when preloading it fails, while the
+    /// current one plays on; it skips that one when it gets there.
+    fn unavailable(&self, uri: Option<&str>) -> &'static str {
+        if uri.is_some() && uri == self.loading.as_deref() {
+            "Spotify can't play this track here; skipping it."
+        } else {
+            "Spotify can't play the next track here; it will be skipped."
+        }
+    }
+
     /// Adds the details of `uri`, unless another track started meanwhile.
-    fn describe(&mut self, uri: &str, track: Option<Track>) {
+    fn describe(&mut self, uri: &str, track: Track) {
         if self.uri.as_deref() == Some(uri) {
-            self.track = track.map(Rc::new);
+            self.track = Some(Rc::new(track));
         }
     }
 
@@ -121,23 +173,41 @@ impl Jukebox {
             PlayerEvent::TrackChanged { audio_item } => {
                 let covers = audio_item.covers.iter();
                 let cover = cover::pick(covers.map(|image| (image.width, image.url.as_str())));
-                self.change_track(audio_item.uri, cover);
+                // What the player knows, for when the catalog cannot describe the track.
+                let fallback = Track {
+                    uri: audio_item.uri.clone(),
+                    name: audio_item.name,
+                    artists: Vec::new(),
+                    album: Album {
+                        uri: String::new(),
+                        name: String::new(),
+                    },
+                    duration_ms: u64::from(audio_item.duration_ms),
+                };
+                self.change_track(audio_item.uri, cover, fallback);
             }
-            PlayerEvent::Playing { position_ms, .. } => {
-                self.now.update(|now| now.report(position_ms, true));
-            }
-            PlayerEvent::Paused { position_ms, .. } => {
-                self.now.update(|now| now.report(position_ms, false));
-            }
+            PlayerEvent::Playing {
+                position_ms,
+                track_id,
+                ..
+            } => self.now.update(|now| {
+                now.report(position_ms, true);
+                now.requested = track_id.to_uri().ok();
+            }),
+            PlayerEvent::Paused {
+                position_ms,
+                track_id,
+                ..
+            } => self.now.update(|now| {
+                now.report(position_ms, false);
+                now.requested = track_id.to_uri().ok();
+            }),
             PlayerEvent::Seeked { position_ms, .. }
             | PlayerEvent::PositionCorrection { position_ms, .. }
             | PlayerEvent::PositionChanged { position_ms, .. } => {
                 self.now.update(|now| now.report(position_ms, now.playing));
             }
-            PlayerEvent::Stopped { .. } => self.now.update(|now| {
-                now.playing = false;
-                now.stopped = true;
-            }),
+            PlayerEvent::Stopped { .. } => self.now.update(NowPlaying::stop),
             PlayerEvent::VolumeChanged { volume } => self.now.update(|now| now.volume = volume),
             PlayerEvent::ShuffleChanged { shuffle } => self.now.update(|now| now.shuffle = shuffle),
             PlayerEvent::RepeatChanged { context, track } => self.now.update(|now| {
@@ -147,28 +217,40 @@ impl Jukebox {
                     (false, false) => Repeat::Off,
                 };
             }),
-            PlayerEvent::Unavailable { .. } => {
-                self.warn("Spotify can't play this track here; skipping it.".into());
+            PlayerEvent::Loading { track_id, .. } => {
+                self.now.update(|now| now.loading = track_id.to_uri().ok());
+            }
+            PlayerEvent::Unavailable { track_id, .. } => {
+                let uri = track_id.to_uri().ok();
+                let notice = self
+                    .now
+                    .with_untracked(|now| now.unavailable(uri.as_deref()));
+                self.warn(notice.into());
             }
             _ => {}
         }
     }
 
-    fn change_track(self: &Rc<Self>, uri: String, cover: Option<String>) {
-        self.now.update(|now| {
-            now.uri = Some(uri.clone());
-            now.track = None;
-            now.stopped = false;
-        });
+    fn change_track(self: &Rc<Self>, uri: String, cover: Option<String>, fallback: Track) {
+        let known = self.now.update(|now| now.start(&uri));
         self.change_cover(&uri, cover);
+        if known {
+            return;
+        }
         let Some(catalog) = self.catalog() else {
+            self.now.update(|now| now.describe(&uri, fallback));
             return;
         };
         let now = self.now.clone();
         let started = self.spawn(async move {
-            let track = catalog.tracks(vec![uri.clone()]).await?.into_iter().next();
-            now.update(|now| now.describe(&uri, track));
-            Ok(())
+            // A failed or empty answer would otherwise leave "Loading…" for the whole track.
+            let found = catalog.tracks(vec![uri.clone()]).await;
+            let track = found
+                .as_ref()
+                .ok()
+                .and_then(|tracks| tracks.first().cloned());
+            now.update(|now| now.describe(&uri, track.unwrap_or(fallback)));
+            found.map(drop)
         });
         if let Err(error) = started {
             self.warn(error.to_string());
@@ -222,7 +304,13 @@ impl Jukebox {
     }
 
     pub(super) fn command(&self, command: Command) {
-        self.with_speaker(|speaker| speaker.command(command));
+        self.with_speaker(|speaker| {
+            speaker.command(command)?;
+            if command == Command::Next {
+                self.now.update(NowPlaying::skip);
+            }
+            Ok(())
+        });
     }
 
     pub(super) fn toggle_play(&self) -> Result<(), Error> {
@@ -291,7 +379,7 @@ impl Jukebox {
     }
 
     pub(super) fn playing_uri(&self) -> Option<String> {
-        self.now.with(|now| now.uri.clone())
+        self.now.with(NowPlaying::listed_uri)
     }
 }
 
@@ -324,7 +412,7 @@ impl Jukebox {
 
     pub(super) fn track_details(&self) -> String {
         self.now.with(|now| match &now.track {
-            Some(track) => format!("{} · {}", track.artist_names(), track.album.name),
+            Some(track) => details(track),
             None => format!("Choose a track and press Enter · plays here as “{DEVICE_NAME}”"),
         })
     }
@@ -421,7 +509,118 @@ impl Jukebox {
     }
 }
 
+/// The player alone names neither the artists nor the album.
+fn details(track: &Track) -> String {
+    [track.artist_names(), track.album.name.clone()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn label(length: Duration) -> String {
     // Saturates only past 584 million years.
     duration(length.as_millis().try_into().unwrap_or(u64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Album, NowPlaying, Repeat, Track, details};
+    use crate::spotify::Artist;
+    use std::time::Duration;
+
+    #[test]
+    fn skipping_ends_repeat_one_only() {
+        let mut now = NowPlaying::default();
+        for (before, after) in [
+            (Repeat::Track, Repeat::Context),
+            (Repeat::Context, Repeat::Context),
+            (Repeat::Off, Repeat::Off),
+        ] {
+            now.repeat = before;
+            now.skip();
+            assert_eq!(now.repeat, after);
+        }
+    }
+
+    #[test]
+    fn only_a_loading_track_is_skipped_now() {
+        let mut now = NowPlaying {
+            uri: Some("spotify:track:playing".into()),
+            loading: Some("spotify:track:loading".into()),
+            ..NowPlaying::default()
+        };
+        assert!(
+            now.unavailable(Some("spotify:track:loading"))
+                .contains("this track")
+        );
+        assert!(
+            now.unavailable(Some("spotify:track:next"))
+                .contains("next track")
+        );
+        now.loading = None;
+        assert!(now.unavailable(None).contains("next track"));
+    }
+
+    #[test]
+    fn restarting_a_track_keeps_its_details() {
+        let track = Track {
+            uri: "spotify:track:one".into(),
+            name: "One".into(),
+            artists: Vec::new(),
+            album: Album {
+                uri: "spotify:album:one".into(),
+                name: "One".into(),
+            },
+            duration_ms: 1_000,
+        };
+        let mut now = NowPlaying::default();
+        assert!(!now.start("spotify:track:one"));
+        now.describe("spotify:track:one", track);
+        assert!(now.start("spotify:track:one"));
+        assert!(now.track.is_some());
+        assert!(!now.start("spotify:track:two"));
+        assert!(now.track.is_none());
+    }
+
+    #[test]
+    fn details_leave_out_what_is_unknown() {
+        let mut track = Track {
+            uri: "spotify:episode:one".into(),
+            name: "One".into(),
+            artists: Vec::new(),
+            album: Album {
+                uri: String::new(),
+                name: String::new(),
+            },
+            duration_ms: 1_000,
+        };
+        assert_eq!(details(&track), "");
+        track.artists.push(Artist {
+            uri: "spotify:artist:one".into(),
+            name: "Band".into(),
+        });
+        track.album.name = "Record".into();
+        assert_eq!(details(&track), "Band · Record");
+    }
+
+    #[test]
+    fn a_relinked_track_keeps_its_listed_uri() {
+        let mut now = NowPlaying::default();
+        now.start("spotify:track:copy");
+        assert_eq!(now.listed_uri().as_deref(), Some("spotify:track:copy"));
+        now.requested = Some("spotify:track:listed".into());
+        assert_eq!(now.listed_uri().as_deref(), Some("spotify:track:listed"));
+        now.start("spotify:track:next");
+        assert_eq!(now.listed_uri().as_deref(), Some("spotify:track:next"));
+    }
+
+    #[test]
+    fn stopping_rewinds_to_the_start() {
+        let mut now = NowPlaying::default();
+        now.report(60_000, true);
+        now.stop();
+        assert_eq!(now.elapsed(), Duration::ZERO);
+        assert!(now.stopped && !now.playing);
+    }
 }
