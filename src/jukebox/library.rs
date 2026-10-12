@@ -1,12 +1,13 @@
 use super::{Jukebox, listing::Source};
-use crate::spotify::{LibraryEntry, LibraryItem, Playlist};
+use crate::{
+    icons::{self, Icons},
+    spotify::{LibraryEntry, LibraryItem, Playlist},
+};
 use std::{collections::HashSet, rc::Rc};
 
 /// Shelves above the playlists in `ui/shelves.html`: Search, Liked Songs, Recently played.
 pub(super) const FIXED_SHELVES: usize = 3;
 const INDENT: &str = "  ";
-const FOLDER_OPEN: &str = "▾ ";
-const FOLDER_CLOSED: &str = "▸ ";
 
 /// One line of the sidebar's playlist section.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +38,7 @@ pub(crate) fn shelf_rows(
     entries: &[LibraryEntry],
     open: &HashSet<String>,
     current: Option<&str>,
+    icons: &Icons,
 ) -> Vec<ShelfRow> {
     let holds_current = |folder: &str| {
         entries.iter().any(|entry| {
@@ -53,7 +55,11 @@ pub(crate) fn shelf_rows(
             match &entry.item {
                 LibraryItem::Folder { id, name } => {
                     let is_open = open.contains(id);
-                    let marker = if is_open { FOLDER_OPEN } else { FOLDER_CLOSED };
+                    let marker = if is_open {
+                        icons.folder_open
+                    } else {
+                        icons.folder_closed
+                    };
                     ShelfRow {
                         key: format!("folder:{id}"),
                         label: format!("{indent}{marker}{name}"),
@@ -67,7 +73,7 @@ pub(crate) fn shelf_rows(
                 }
                 LibraryItem::Playlist(playlist) => ShelfRow {
                     key: playlist.uri.clone(),
-                    label: format!("{indent}{}", playlist.name),
+                    label: format!("{indent}{}{}", icons.playlist, playlist.name),
                     current: Some(playlist.uri.as_str()) == current,
                     parent,
                     target: ShelfTarget::Playlist(playlist.clone()),
@@ -85,7 +91,7 @@ impl Jukebox {
         });
         self.open_folders.with(|open| {
             self.library.with(|entries| {
-                shelf_rows(entries, open, current.as_deref())
+                shelf_rows(entries, open, current.as_deref(), icons::get())
                     .into_iter()
                     .map(Rc::new)
                     .collect()
@@ -114,6 +120,7 @@ impl Jukebox {
 #[cfg(test)]
 mod tests {
     use super::{ShelfTarget, shelf_rows};
+    use crate::icons::PLAIN;
     use crate::spotify::{LibraryEntry, LibraryItem, Playlist};
     use std::{collections::HashSet, rc::Rc};
 
@@ -152,7 +159,7 @@ mod tests {
     fn closed_folders_hide_their_contents() {
         let labels = |open: &[&str]| {
             let open: HashSet<String> = open.iter().map(|id| (*id).to_owned()).collect();
-            shelf_rows(&library(), &open, None)
+            shelf_rows(&library(), &open, None, &PLAIN)
                 .into_iter()
                 .map(|row| row.label)
                 .collect::<Vec<_>>()
@@ -172,7 +179,7 @@ mod tests {
 
     #[test]
     fn a_closed_folder_shows_the_playing_list_inside() {
-        let closed = shelf_rows(&library(), &HashSet::new(), Some("c"));
+        let closed = shelf_rows(&library(), &HashSet::new(), Some("c"), &PLAIN);
         let current: Vec<_> = closed
             .iter()
             .filter(|row| row.current)
@@ -180,7 +187,7 @@ mod tests {
             .collect();
         assert_eq!(current, ["folder:outer"]);
         let open: HashSet<String> = ["outer".to_owned(), "inner".to_owned()].into();
-        let opened = shelf_rows(&library(), &open, Some("c"));
+        let opened = shelf_rows(&library(), &open, Some("c"), &PLAIN);
         let current: Vec<_> = opened
             .iter()
             .filter(|row| row.current)

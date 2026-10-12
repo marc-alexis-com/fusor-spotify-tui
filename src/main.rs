@@ -1,4 +1,5 @@
 mod cover;
+mod icons;
 mod jukebox;
 mod spotify;
 

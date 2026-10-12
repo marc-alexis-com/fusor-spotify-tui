@@ -1,6 +1,6 @@
 use super::{Jukebox, listing::duration};
 use crate::{
-    cover,
+    cover, icons,
     spotify::{
         Album, Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker,
         Track,
@@ -473,8 +473,16 @@ impl Jukebox {
             .now
             .with(|now| (u32::from(now.volume) * PERCENT + full / 2) / full);
         let filled = percent.div_ceil(PERCENT / VOLUME_CELLS);
+        let levels = &icons::get().volume;
+        // Silent, then three equal thirds of the range.
+        let level = levels[percent.div_ceil(PERCENT / 3).min(3) as usize];
+        let icon = if level.is_empty() {
+            String::new()
+        } else {
+            format!("{level} ")
+        };
         format!(
-            "{}{} {percent:>3}%",
+            "{icon}{}{} {percent:>3}%",
             "▮".repeat(filled as usize),
             "▯".repeat(VOLUME_CELLS.saturating_sub(filled) as usize)
         )
@@ -490,8 +498,16 @@ impl Jukebox {
 
     pub(super) fn repeat_label(&self) -> &'static str {
         match self.repeat_mode() {
-            Repeat::Off | Repeat::Context => "↻ Repeat",
-            Repeat::Track => "↻ Repeat one",
+            Repeat::Off | Repeat::Context => icons::get().repeat,
+            Repeat::Track => icons::get().repeat_one,
+        }
+    }
+
+    pub(super) fn play_label(&self) -> &'static str {
+        if self.is_playing() {
+            icons::get().pause
+        } else {
+            icons::get().play
         }
     }
 
