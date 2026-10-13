@@ -73,6 +73,8 @@ pub(crate) struct Jukebox {
     /// Whether the selection follows the end of the list while the rest loads, after End or `G`.
     to_end: Cell<bool>,
     search: Signal<String>,
+    /// Counts the edits of the search field, so that only the last one searches.
+    search_edits: Cell<u64>,
     /// The artists, albums, playlists and podcasts of the last search.
     found: Signal<Option<Found>>,
     /// The Liked Songs with their details, once a library search loaded them.
@@ -135,6 +137,7 @@ impl FromInputs for Jukebox {
             pending_g: Cell::new(None),
             to_end: Cell::new(false),
             search: signal(String::new()),
+            search_edits: Cell::new(0),
             found: signal(None),
             liked: Rc::default(),
             focused_box: signal(None),

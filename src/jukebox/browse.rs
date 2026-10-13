@@ -17,6 +17,9 @@ const CHUNK: usize = 100;
 const PREFETCH_ROWS: usize = 30;
 const HEADER_ROWS: usize = 1;
 const SHOW_PREFIX: &str = "spotify:show:";
+/// How long typing pauses before the search follows it.
+const LIBRARY_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(80);
+const CATALOG_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(300);
 
 impl Jukebox {
     /// Opens a library section, forgetting where the user drilled down from.
@@ -173,26 +176,61 @@ impl Jukebox {
 
     /// Opens the search in the field, in the catalog or the library as the list is.
     fn run_search(self: &Rc<Self>) {
-        let text = self.search.with_untracked(|text| text.trim().to_owned());
-        if text.is_empty() {
+        if self.search.with_untracked(|text| text.trim().is_empty()) {
             return;
         }
-        let library = self
-            .listing
-            .with_untracked(|listing| matches!(listing.source, Source::Library(_)));
-        self.open(if library {
-            Source::Library(text)
-        } else {
-            Source::Search(text)
-        });
+        self.search_now();
         self.focus("tracks");
     }
 
+    /// Searches as the user types, once typing pauses: briefly in the library, which
+    /// is already loaded, and longer in the catalog, which asks Spotify each time.
+    pub(super) fn search_typed(self: &Rc<Self>) {
+        let edit = self.search_edits.get() + 1;
+        self.search_edits.set(edit);
+        let delay = if self.searching_library() {
+            LIBRARY_TYPING_PAUSE
+        } else {
+            CATALOG_TYPING_PAUSE
+        };
+        let jukebox = self.clone();
+        self.after(delay, move || {
+            if jukebox.search_edits.get() == edit {
+                jukebox.search_now();
+            }
+        });
+    }
+
+    /// Lists what the search field holds, in the catalog or the library as the list
+    /// is, unless it already does; the focus stays where it is.
+    fn search_now(self: &Rc<Self>) {
+        let text = self.search.with_untracked(|text| text.trim().to_owned());
+        let source = self
+            .listing
+            .with_untracked(|listing| match &listing.source {
+                Source::Library(_) => Source::Library(text),
+                _ => Source::Search(text),
+            });
+        if !self.is_current_untracked(&source) {
+            self.open(source);
+        }
+    }
+
+    fn is_current_untracked(&self, source: &Source) -> bool {
+        self.listing
+            .with_untracked(|listing| &listing.source == source)
+    }
+
+    /// Searches the catalog for what the field already holds, if anything.
     pub(super) fn start_search(self: &Rc<Self>) {
         if !self.searching_catalog() {
-            self.open(Source::Search(String::new()));
+            self.open(Source::Search(self.search_text()));
         }
         self.focus("search");
+    }
+
+    pub(super) fn search_text(&self) -> String {
+        self.search.with_untracked(|text| text.trim().to_owned())
     }
 
     /// Whether the search field shows, for the catalog or the library.
@@ -208,9 +246,9 @@ impl Jukebox {
 
     pub(super) fn search_placeholder(&self) -> &'static str {
         if self.searching_library() {
-            "Your Liked Songs and playlists… then Enter"
+            "Your Liked Songs and playlists…"
         } else {
-            "Songs, artists, albums, podcasts… then Enter"
+            "Songs, artists, albums, podcasts…"
         }
     }
 

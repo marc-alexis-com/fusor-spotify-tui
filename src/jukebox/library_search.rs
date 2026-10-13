@@ -144,9 +144,10 @@ fn fold(text: &str) -> String {
 }
 
 impl Jukebox {
+    /// Searches the library for what the field already holds, if anything.
     pub(super) fn start_library_search(self: &Rc<Self>) {
         if !self.searching_library() {
-            self.open(Source::Library(String::new()));
+            self.open(Source::Library(self.search_text()));
         }
         self.focus("search");
     }

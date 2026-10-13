@@ -194,7 +194,7 @@ impl Jukebox {
     }
 
     /// Runs `action` after `delay`, unless the app is gone by then.
-    fn after(&self, delay: Duration, action: impl FnOnce() + 'static) {
+    pub(super) fn after(&self, delay: Duration, action: impl FnOnce() + 'static) {
         let Ok(sleep) = self.services.sleep(delay) else {
             return;
         };

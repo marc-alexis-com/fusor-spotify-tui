@@ -156,10 +156,10 @@ impl Source {
 
     pub(crate) fn empty_message(&self) -> &'static str {
         match self {
-            Self::Search(text) if text.is_empty() => "Type what you want to hear and press Enter.",
+            Self::Search(text) if text.is_empty() => "Type what you want to hear.",
             Self::Search(_) => "Nothing matched. Try other words.",
             Self::Library(text) if text.is_empty() => {
-                "Type what to find in your Liked Songs and playlists, then press Enter."
+                "Type what to find in your Liked Songs and playlists."
             }
             Self::Library(_) => "Nothing in your Liked Songs matched. Try other words.",
             Self::Liked => "Songs you like in Spotify appear here.",
