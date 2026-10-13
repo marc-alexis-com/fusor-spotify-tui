@@ -405,21 +405,20 @@ impl Jukebox {
         self.listing.with(|listing| &listing.source == source)
     }
 
-    pub(super) fn position(&self) -> String {
-        if self.holding_tracks() {
-            return String::new();
-        }
+    /// The scrollbar beside the track list, as lines of its track, thumb and track.
+    pub(super) fn scrollbar(&self) -> [String; 3] {
         let window = self.window.get();
-        self.listing.with(|listing| {
-            if listing.tracks.is_empty() {
-                return String::new();
-            }
-            let back = if self.history.borrow().is_empty() {
-                ""
-            } else {
-                " · Esc back"
-            };
-            format!("{} of {}{back}", window.selected + 1, listing.count())
+        let (before, thumb, after) = if self.holding_tracks() {
+            (0, 0, 0)
+        } else {
+            self.listing
+                .with(|listing| window.scrollbar(listing.count()))
+        };
+        [before, thumb, after].map(|lines| {
+            vec!["│"; lines].join(
+                "
+",
+            )
         })
     }
 }

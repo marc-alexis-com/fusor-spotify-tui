@@ -103,6 +103,22 @@ impl Window {
         self.top.min(length)..(self.top + self.rows).min(length)
     }
 
+    /// The rows of the scrollbar beside the window, out of `length` entries: the
+    /// track above the thumb, the thumb, and the track below it. Empty when every
+    /// entry fits.
+    pub(crate) fn scrollbar(&self, length: usize) -> (usize, usize, usize) {
+        if length <= self.rows {
+            return (0, 0, 0);
+        }
+        let thumb = (self.rows * self.rows).div_ceil(length).clamp(1, self.rows);
+        let room = self.rows - thumb;
+        let scrollable = length - self.rows;
+        let before = (self.top.min(scrollable) * room)
+            .div_ceil(scrollable)
+            .min(room);
+        (before, thumb, room - before)
+    }
+
     /// The first row past the window, which should be loaded before it scrolls into view.
     pub(crate) fn end(&self) -> usize {
         self.top + self.rows
@@ -416,6 +432,29 @@ mod tests {
         assert_eq!((window.selected, window.visible(2)), (1, 0..2));
         window.select(9, 0);
         assert_eq!((window.selected, window.visible(0)), (0, 0..0));
+    }
+
+    #[test]
+    fn the_scrollbar_follows_the_window() {
+        let mut window = Window::default();
+        window.resize(10);
+        assert_eq!(window.scrollbar(10), (0, 0, 0));
+        assert_eq!(window.scrollbar(100), (0, 1, 9));
+        window.navigate(Key::End, 100);
+        assert_eq!(window.scrollbar(100), (9, 1, 0));
+        window.navigate(Key::Home, 20);
+        assert_eq!(window.scrollbar(20), (0, 5, 5));
+        // Halfway down, the thumb is halfway down.
+        window.select(14, 20);
+        assert_eq!(window.scrollbar(20), (3, 5, 2));
+        window.select(19, 20);
+        assert_eq!(window.scrollbar(20), (5, 5, 0));
+        window.select(0, 20);
+        window.select(9, 20);
+        // Still at the top: the selection only reached the last visible row.
+        assert_eq!(window.scrollbar(20).0, 0);
+        window.select(10, 20);
+        assert_eq!(window.scrollbar(20).0, 1);
     }
 
     #[test]
