@@ -1,6 +1,6 @@
 use super::{Album, Artist, Error, LibraryEntry, LibraryItem, Playlist, Track};
 use http::Method;
-use librespot_core::{Session, SpotifyUri};
+use librespot_core::{Session, SpotifyId, SpotifyUri};
 use librespot_protocol::{
     extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery},
     extension_kind::ExtensionKind,
@@ -17,6 +17,7 @@ use std::{
 
 const ROOTLIST_LENGTH: usize = 1000;
 const TRACK_PREFIX: &str = "spotify:track:";
+const EPISODE_PREFIX: &str = "spotify:episode:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 /// Folders appear in the rootlist as a start marker, their contents, then an end marker.
 const FOLDER_START: &str = "spotify:start-group:";
@@ -73,7 +74,25 @@ impl Catalog {
         Ok(library_entries(entries))
     }
 
-    /// The tracks of a playlist, album, artist, the liked songs or a search.
+    /// The tracks and episodes of a playlist. Spotify's context of a playlist leaves its
+    /// episodes out, and is empty for a playlist of podcasts, so the playlist itself is read.
+    pub(crate) async fn playlist_tracks(&self, uri: String) -> Result<Vec<String>, Error> {
+        let session = self.session.clone();
+        run(async move {
+            let id = SpotifyId::from_base62(uri.strip_prefix(PLAYLIST_PREFIX).unwrap_or(&uri))?;
+            let bytes = session.spclient().get_playlist(&id).await?;
+            let playlist = SelectedListContent::parse_from_bytes(&bytes)?;
+            let uris = playlist
+                .contents
+                .items
+                .iter()
+                .map(|item| item.uri().to_owned());
+            Ok(unique_tracks(uris))
+        })
+        .await
+    }
+
+    /// The tracks of a playlist, album, artist, show, the liked songs or a search.
     pub(crate) async fn context_tracks(&self, uri: String) -> Result<Vec<String>, Error> {
         let session = self.session.clone();
         run(async move {
@@ -110,7 +129,8 @@ impl Catalog {
         .await
     }
 
-    /// Looks up many tracks in one request, in the order of `uris`; unavailable tracks are left out.
+    /// Looks up many tracks and episodes in one request, in the order of `uris`;
+    /// unavailable ones are left out.
     pub(crate) async fn tracks(&self, uris: Vec<String>) -> Result<Vec<Track>, Error> {
         let session = self.session.clone();
         run(async move {
@@ -127,12 +147,8 @@ impl Catalog {
                 .flat_map(|array| &array.extension_data)
                 .filter(|data| data.header.status_code == STATUS_OK)
                 .filter_map(|data| {
-                    let message =
-                        metadata::Track::parse_from_bytes(&data.extension_data.value).ok()?;
-                    Some((
-                        data.entity_uri.clone(),
-                        track(&data.entity_uri, &message).ok()?,
-                    ))
+                    let uri = &data.entity_uri;
+                    Some((uri.clone(), describe(uri, &data.extension_data.value)?))
                 })
                 .collect();
             Ok(uris.iter().filter_map(|uri| found.remove(uri)).collect())
@@ -219,17 +235,26 @@ fn decode_name(encoded: &str) -> String {
     String::from_utf8_lossy(&decoded).into_owned()
 }
 
+/// The tracks and episodes among `uris`, each once, in order.
 fn unique_tracks(uris: impl Iterator<Item = String>) -> Vec<String> {
     let mut seen = HashSet::new();
-    uris.filter(|uri| uri.starts_with(TRACK_PREFIX) && seen.insert(uri.clone()))
-        .collect()
+    uris.filter(|uri| {
+        (uri.starts_with(TRACK_PREFIX) || uri.starts_with(EPISODE_PREFIX))
+            && seen.insert(uri.clone())
+    })
+    .collect()
 }
 
 fn track_request(uri: &str) -> EntityRequest {
+    let kind = if uri.starts_with(EPISODE_PREFIX) {
+        ExtensionKind::EPISODE_V4
+    } else {
+        ExtensionKind::TRACK_V4
+    };
     EntityRequest {
         entity_uri: uri.to_owned(),
         query: vec![ExtensionQuery {
-            extension_kind: EnumOrUnknown::new(ExtensionKind::TRACK_V4),
+            extension_kind: EnumOrUnknown::new(kind),
             ..ExtensionQuery::default()
         }],
         ..EntityRequest::default()
@@ -254,6 +279,30 @@ fn track(uri: &str, message: &metadata::Track) -> Result<Track, Error> {
         album: Album {
             uri: SpotifyUri::try_from(&*message.album)?.to_uri()?,
             name: message.album.name().to_owned(),
+        },
+        duration_ms: u64::from(message.duration().unsigned_abs()),
+    })
+}
+
+/// The track or episode that `bytes` describe, unless Spotify described it incompletely.
+fn describe(uri: &str, bytes: &[u8]) -> Option<Track> {
+    let found = if uri.starts_with(EPISODE_PREFIX) {
+        episode(uri, &metadata::Episode::parse_from_bytes(bytes).ok()?)
+    } else {
+        track(uri, &metadata::Track::parse_from_bytes(bytes).ok()?)
+    };
+    found.ok()
+}
+
+/// An episode lists like a track whose album is its show, and has no artists.
+fn episode(uri: &str, message: &metadata::Episode) -> Result<Track, Error> {
+    Ok(Track {
+        uri: uri.to_owned(),
+        name: message.name().to_owned(),
+        artists: Vec::new(),
+        album: Album {
+            uri: SpotifyUri::try_from(&*message.show)?.to_uri()?,
+            name: message.show.name().to_owned(),
         },
         duration_ms: u64::from(message.duration().unsigned_abs()),
     })
@@ -329,13 +378,15 @@ mod tests {
         let uris = [
             "spotify:track:b",
             "spotify:episode:x",
+            "spotify:local:artist:album:name:60",
             "spotify:track:a",
             "spotify:track:b",
+            "spotify:episode:x",
         ]
         .map(String::from);
         assert_eq!(
             unique_tracks(uris.into_iter()),
-            ["spotify:track:b", "spotify:track:a"]
+            ["spotify:track:b", "spotify:episode:x", "spotify:track:a"]
         );
     }
 }
