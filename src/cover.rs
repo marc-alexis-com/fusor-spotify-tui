@@ -1,17 +1,13 @@
-//! Album covers in the now-playing bar, through the kitty graphics protocol.
+//! Covers in the now-playing bar and the playlist header, through the kitty graphics
+//! protocol.
 //!
-//! The cover is sent to the terminal once per track, then shown with Unicode
+//! A cover is sent to the terminal once, then shown with Unicode
 //! placeholders: ordinary text cells whose foreground color and diacritics name
 //! the image, the row and the column. The interface paints them like any
 //! other text, and tmux redraws them on its own, so no cursor positioning is needed.
 use image::imageops::FilterType;
 use std::io::{self, Write};
 
-/// Cells the cover takes in the now-playing bar.
-pub(crate) const COLUMNS: usize = 6;
-pub(crate) const ROWS: usize = 3;
-/// Side of the image sent to the terminal; the terminal scales it to the cells.
-const PIXELS: u32 = 160;
 /// Spotify sends 64, 300 and 640 pixel covers; the smallest that is sharp enough wins.
 const SHARP_ENOUGH: i32 = 160;
 const CHUNK: usize = 4096;
@@ -51,11 +47,52 @@ const DIACRITICS: [char; 256] = [
     '\u{2DFB}', '\u{2DFC}', '\u{2DFD}', '\u{2DFE}', '\u{2DFF}', '\u{A66F}', '\u{A67C}', '\u{A67D}',
     '\u{A6F0}', '\u{A6F1}', '\u{A8E0}', '\u{A8E1}', '\u{A8E2}', '\u{A8E3}', '\u{A8E4}', '\u{A8E5}',
 ];
-/// The color of the placeholders, which is also the low bits of the image's ID:
-/// #5F87AF in true color, or the exact 256-color cube entry 67 that hypercmd turns
-/// it into otherwise. The high byte comes from [`instance`].
-const TRUE_COLOR_ID: u32 = 0x5F_87AF;
-const INDEXED_ID: u32 = 67;
+/// Where a cover shows; each place holds its own image in the terminal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Slot {
+    /// Left of the now-playing bar.
+    Player,
+    /// Left of the playlist's name, above its tracks.
+    Playlist,
+}
+
+impl Slot {
+    /// Cells the cover takes.
+    pub(crate) const fn columns(self) -> usize {
+        match self {
+            Self::Player => 6,
+            Self::Playlist => 10,
+        }
+    }
+
+    pub(crate) const fn rows(self) -> usize {
+        match self {
+            Self::Player => 3,
+            Self::Playlist => 5,
+        }
+    }
+
+    /// Side of the image sent to the terminal; the terminal scales it to the cells.
+    const fn pixels(self) -> u32 {
+        match self {
+            Self::Player => 160,
+            Self::Playlist => 240,
+        }
+    }
+
+    /// The color of the placeholders, which is also the low bits of the image's ID:
+    /// a true color, or the exact 256-color cube entry hypercmd turns it into
+    /// otherwise. The high byte comes from [`instance`]. The colors must match
+    /// `.cover-row` and `.playlist-cover-row` in `ui/terminal.css`.
+    const fn color(self, true_color: bool) -> u32 {
+        match (self, true_color) {
+            (Self::Player, true) => 0x5F_87AF,
+            (Self::Player, false) => 67,
+            (Self::Playlist, true) => 0x5F_87D7,
+            (Self::Playlist, false) => 68,
+        }
+    }
+}
 
 /// Whether this terminal shows images; inside tmux, kitty's variables are inherited.
 /// The placeholders also need a color, which hypercmd leaves out without one of these.
@@ -67,16 +104,16 @@ pub(crate) fn supported() -> bool {
     kitty && colored
 }
 
-/// The text of one row of the cover.
-pub(crate) fn row(row: usize) -> String {
-    placeholders(row, instance())
+/// The text of one row of a cover.
+pub(crate) fn row(slot: Slot, row: usize) -> String {
+    placeholders(slot.columns(), row, instance())
 }
 
 /// Each cell names its row, its column, then the high byte of the image's ID.
-fn placeholders(row: usize, instance: u8) -> String {
+fn placeholders(columns: usize, row: usize, instance: u8) -> String {
     DIACRITICS
         .iter()
-        .take(COLUMNS)
+        .take(columns)
         .flat_map(|column| {
             [
                 PLACEHOLDER,
@@ -106,10 +143,11 @@ pub(crate) fn pick<'a>(sizes: impl Iterator<Item = (i32, &'a str)>) -> Option<St
         .map(|(_, url)| (*url).to_owned())
 }
 
-/// Downloads a cover and shrinks it to raw RGB pixels.
+/// Downloads a cover and shrinks it to the raw RGB pixels of `slot`.
 pub(crate) async fn fetch(
     http: reqwest::Client,
     url: String,
+    slot: Slot,
 ) -> Result<Vec<u8>, crate::spotify::Error> {
     let bytes = tokio::spawn(async move {
         http.get(url)
@@ -123,21 +161,22 @@ pub(crate) async fn fetch(
     let picture = image::load_from_memory(&bytes)
         .map_err(|error| crate::spotify::Error::Cover(error.to_string()))?;
     Ok(picture
-        .resize_exact(PIXELS, PIXELS, FilterType::Triangle)
+        .resize_exact(slot.pixels(), slot.pixels(), FilterType::Triangle)
         .to_rgb8()
         .into_raw())
 }
 
-/// Replaces the cover the terminal holds with `pixels`.
-pub(crate) fn show(pixels: &[u8]) -> io::Result<()> {
-    let id = image_id();
+/// Replaces the cover the terminal holds for `slot` with `pixels`.
+pub(crate) fn show(slot: Slot, pixels: &[u8]) -> io::Result<()> {
+    let id = image_id(slot);
+    let (side, columns, rows) = (slot.pixels(), slot.columns(), slot.rows());
     let payload = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, pixels);
-    let mut commands = vec![delete()];
+    let mut commands = vec![delete(slot)];
     let chunks: Vec<_> = payload.as_bytes().chunks(CHUNK).collect();
     for (index, chunk) in chunks.iter().enumerate() {
         let more = u8::from(index + 1 < chunks.len());
         let keys = if index == 0 {
-            format!("a=T,U=1,i={id},f=24,s={PIXELS},v={PIXELS},c={COLUMNS},r={ROWS},q=2,m={more}")
+            format!("a=T,U=1,i={id},f=24,s={side},v={side},c={columns},r={rows},q=2,m={more}")
         } else {
             format!("q=2,m={more}")
         };
@@ -153,15 +192,16 @@ pub(crate) fn show(pixels: &[u8]) -> io::Result<()> {
     output.flush()
 }
 
-/// Frees the cover the terminal holds, when a track has none or the player exits.
-pub(crate) fn clear() -> io::Result<()> {
+/// Frees the cover the terminal holds for `slot`, when there is none to show or the
+/// player exits.
+pub(crate) fn clear(slot: Slot) -> io::Result<()> {
     let mut output = io::stdout().lock();
-    output.write_all(through_tmux(delete()).as_bytes())?;
+    output.write_all(through_tmux(delete(slot)).as_bytes())?;
     output.flush()
 }
 
-fn delete() -> String {
-    format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", image_id())
+fn delete(slot: Slot) -> String {
+    format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", image_id(slot))
 }
 
 /// The same test hypercmd uses before downgrading colors to 256.
@@ -169,17 +209,12 @@ fn true_color() -> bool {
     std::env::var("COLORTERM").is_ok_and(|color| matches!(color.as_str(), "truecolor" | "24bit"))
 }
 
-fn image_id() -> u32 {
-    id(instance(), true_color())
+fn image_id(slot: Slot) -> u32 {
+    id(slot, instance(), true_color())
 }
 
-fn id(instance: u8, true_color: bool) -> u32 {
-    let color = if true_color {
-        TRUE_COLOR_ID
-    } else {
-        INDEXED_ID
-    };
-    u32::from(instance) << 24 | color
+fn id(slot: Slot, instance: u8, true_color: bool) -> u32 {
+    u32::from(instance) << 24 | slot.color(true_color)
 }
 
 /// tmux forwards an escape sequence to the outer terminal only when wrapped.
@@ -192,12 +227,12 @@ fn through_tmux(command: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{COLUMNS, DIACRITICS, PLACEHOLDER, id, placeholders};
+    use super::{DIACRITICS, PLACEHOLDER, Slot, id, placeholders};
 
     #[test]
     fn placeholders_carry_row_column_and_instance() {
-        let row: Vec<char> = placeholders(2, 200).chars().collect();
-        assert_eq!(row.len(), COLUMNS * 4);
+        let row: Vec<char> = placeholders(6, 2, 200).chars().collect();
+        assert_eq!(row.len(), 6 * 4);
         assert_eq!(
             row.get(4..8),
             Some(&[PLACEHOLDER, '\u{030E}', '\u{030D}', DIACRITICS[200]][..])
@@ -208,7 +243,9 @@ mod tests {
 
     #[test]
     fn ids_keep_the_color_in_the_low_bits() {
-        assert_eq!(id(200, true), 0xC85F_87AF);
-        assert_eq!(id(1, false), 0x0100_0043);
+        assert_eq!(id(Slot::Player, 200, true), 0xC85F_87AF);
+        assert_eq!(id(Slot::Player, 1, false), 0x0100_0043);
+        assert_eq!(id(Slot::Playlist, 1, true), 0x015F_87D7);
+        assert_eq!(id(Slot::Playlist, 1, false), 0x0100_0044);
     }
 }

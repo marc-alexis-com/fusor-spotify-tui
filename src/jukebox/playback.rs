@@ -1,6 +1,7 @@
 use super::{Jukebox, listing::duration};
 use crate::{
-    cover, icons,
+    cover::{self, Slot},
+    icons,
     spotify::{
         Album, Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker,
         Track,
@@ -287,7 +288,7 @@ impl Jukebox {
         self.cover.set(None);
         let Some(url) = url else {
             // Nothing shows the old cover any more; the terminal can free it.
-            if let Err(error) = cover::clear() {
+            if let Err(error) = cover::clear(Slot::Player) {
                 self.warn(format!("Cannot read the album cover ({error})"));
             }
             return;
@@ -299,10 +300,11 @@ impl Jukebox {
             uri.to_owned(),
         );
         let started = self.spawn(async move {
-            let pixels = cover::fetch(http, url.clone()).await?;
+            let pixels = cover::fetch(http, url.clone(), Slot::Player).await?;
             // Another track may have started during the download.
             if now.with_untracked(|now| now.uri.as_deref() == Some(uri.as_str())) {
-                cover::show(&pixels).map_err(|error| SpotifyError::Cover(error.to_string()))?;
+                cover::show(Slot::Player, &pixels)
+                    .map_err(|error| SpotifyError::Cover(error.to_string()))?;
                 shown.set(Some(url));
             }
             Ok(())
@@ -418,9 +420,9 @@ impl Jukebox {
     /// One row of the cover, or blank cells until the terminal has the image.
     pub(super) fn cover_row(&self, row: usize) -> String {
         if self.cover.with(Option::is_some) {
-            cover::row(row)
+            cover::row(Slot::Player, row)
         } else {
-            " ".repeat(cover::COLUMNS)
+            " ".repeat(Slot::Player.columns())
         }
     }
 

@@ -27,6 +27,16 @@ pub(crate) struct Playlist {
     pub(crate) name: String,
 }
 
+/// What the header of a playlist shows, besides its number of tracks.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlaylistDetails {
+    pub(crate) uri: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) owner: String,
+    pub(crate) cover: Option<String>,
+}
+
 /// A playlist or a folder of the user's library.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum LibraryItem {

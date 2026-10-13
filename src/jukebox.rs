@@ -1,4 +1,5 @@
 mod browse;
+mod header;
 mod keys;
 mod library;
 mod listing;
@@ -6,7 +7,7 @@ mod playback;
 mod session;
 mod view;
 
-use crate::spotify::{self, Catalog, LibraryEntry, Speaker};
+use crate::spotify::{self, Catalog, LibraryEntry, PlaylistDetails, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
 use hypercmd::{Error, Node, Services};
 use listing::{Listing, Source, Window};
@@ -15,6 +16,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     future::Future,
+    rc::Rc,
 };
 
 /// How long a notice stays on screen, in clock ticks.
@@ -69,6 +71,10 @@ pub(crate) struct Jukebox {
     bar_width: Signal<usize>,
     /// The URL of the cover the terminal shows, once it is there.
     cover: Signal<Option<String>>,
+    /// The details of the playlist opened last, for the header above its tracks.
+    playlist: Signal<Option<Rc<PlaylistDetails>>>,
+    /// The URL of the playlist cover the terminal shows, once it is there.
+    playlist_cover: Signal<Option<String>>,
     help: Signal<bool>,
     /// Whether a shelf has the focus, which outlines the sidebar.
     shelves_focused: Signal<bool>,
@@ -105,6 +111,8 @@ impl FromInputs for Jukebox {
             frame: signal(0),
             bar_width: signal(0),
             cover: signal(None),
+            playlist: signal(None),
+            playlist_cover: signal(None),
             help: signal(false),
             shelves_focused: signal(false),
             notice: signal(None),

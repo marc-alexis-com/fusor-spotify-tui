@@ -68,7 +68,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     hypercmd::native::run(hypercmd::mount::<Jukebox>(startup)?)?;
     if cover::supported() {
         // kitty keeps an image until told otherwise, even once the player is gone.
-        cover::clear()?;
+        cover::clear(cover::Slot::Player)?;
+        cover::clear(cover::Slot::Playlist)?;
     }
     Ok(())
 }

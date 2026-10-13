@@ -1,6 +1,22 @@
 <template rust:component="TrackList">
   <section class="listing">
-    <div class="listing-heading">
+    <div class="playlist-header" class:hidden="{{ !state.jukebox.has_playlist_header() }}">
+      <div class="playlist-cover" class:hidden="{{ !state.jukebox.playlist_cover_shown() }}">
+        <p class="playlist-cover-row">{{ state.jukebox.playlist_cover_row(0) }}</p>
+        <p class="playlist-cover-row">{{ state.jukebox.playlist_cover_row(1) }}</p>
+        <p class="playlist-cover-row">{{ state.jukebox.playlist_cover_row(2) }}</p>
+        <p class="playlist-cover-row">{{ state.jukebox.playlist_cover_row(3) }}</p>
+        <p class="playlist-cover-row">{{ state.jukebox.playlist_cover_row(4) }}</p>
+      </div>
+      <div class="playlist-text">
+        <p class="playlist-kind">PLAYLIST</p>
+        <h2 class="playlist-name">{{ state.jukebox.playlist_name() }}</h2>
+        <p class="playlist-description"
+           class:hidden="{{ state.jukebox.playlist_description().is_empty() }}">{{ state.jukebox.playlist_description() }}</p>
+        <p class="playlist-byline">{{ state.jukebox.playlist_byline() }}</p>
+      </div>
+    </div>
+    <div class="listing-heading" class:hidden="{{ state.jukebox.has_playlist_header() }}">
       <h2 class="listing-title">{{ state.jukebox.listing_title() }}</h2>
       <p class="listing-summary">{{ state.jukebox.listing_summary() }}</p>
     </div>

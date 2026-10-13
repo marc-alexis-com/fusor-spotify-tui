@@ -1,4 +1,4 @@
-use super::{Album, Artist, Error, LibraryEntry, LibraryItem, Playlist, Track};
+use super::{Album, Artist, Error, LibraryEntry, LibraryItem, Playlist, PlaylistDetails, Track};
 use http::Method;
 use librespot_core::{Session, SpotifyId, SpotifyUri};
 use librespot_protocol::{
@@ -25,6 +25,19 @@ const FOLDER_END: &str = "spotify:end-group:";
 const UNNAMED_FOLDER: &str = "Untitled folder";
 const SEARCH_PREFIX: &str = "spotify:search:";
 const STATUS_OK: i32 = 200;
+const IMAGE_URL: &str = "https://i.scdn.co/image/";
+/// Spotify's own mosaic of four covers, for playlists without a picture.
+const MOSAIC_URL: &str = "https://mosaic.scdn.co/300/";
+const MOSAIC_TILES: usize = 4;
+/// Tracks whose covers may make up a mosaic.
+const MOSAIC_CANDIDATES: usize = 30;
+/// Editorial playlists name their picture among their format attributes.
+const IMAGE_ATTRIBUTE: &str = "image_url";
+
+#[derive(Deserialize)]
+struct Profile {
+    name: Option<String>,
+}
 
 /// Reads the library and catalog through the same session that plays audio.
 #[derive(Clone)]
@@ -88,6 +101,50 @@ impl Catalog {
                 .iter()
                 .map(|item| item.uri().to_owned());
             Ok(unique_tracks(uris))
+        })
+        .await
+    }
+
+    /// The name, description, owner and cover of a playlist.
+    pub(crate) async fn playlist_details(&self, uri: String) -> Result<PlaylistDetails, Error> {
+        let session = self.session.clone();
+        run(async move {
+            let id = SpotifyId::from_base62(uri.strip_prefix(PLAYLIST_PREFIX).unwrap_or(&uri))?;
+            let bytes = session.spclient().get_playlist(&id).await?;
+            let playlist = SelectedListContent::parse_from_bytes(&bytes)?;
+            let attributes = &playlist.attributes;
+            let picture = attributes
+                .picture
+                .as_deref()
+                .map(|picture| format!("{IMAGE_URL}{}", hex(picture)))
+                .or_else(|| {
+                    attributes
+                        .format_attributes
+                        .iter()
+                        .find(|attribute| attribute.key() == IMAGE_ATTRIBUTE)
+                        .map(|attribute| attribute.value().to_owned())
+                });
+            let cover = match picture {
+                Some(picture) => Some(picture),
+                None => {
+                    let uris = playlist
+                        .contents
+                        .items
+                        .iter()
+                        .map(|item| item.uri().to_owned());
+                    let candidates = unique_tracks(uris).into_iter().take(MOSAIC_CANDIDATES);
+                    mosaic(&session, candidates.collect()).await?
+                }
+            };
+            let username = playlist.owner_username().to_owned();
+            let owner = owner_name(&session, &username).await.unwrap_or(username);
+            Ok(PlaylistDetails {
+                uri,
+                name: attributes.name().to_owned(),
+                description: plain_text(attributes.description()),
+                owner,
+                cover,
+            })
         })
         .await
     }
@@ -284,6 +341,113 @@ fn track(uri: &str, message: &metadata::Track) -> Result<Track, Error> {
     })
 }
 
+/// The display name of a user, which their username is not always meant to be read as.
+async fn owner_name(session: &Session, username: &str) -> Option<String> {
+    let profile = session
+        .spclient()
+        .get_user_profile(username, Some(0), Some(0))
+        .await
+        .ok()?;
+    let profile: Profile = serde_json::from_slice(&profile).ok()?;
+    profile.name.filter(|name| !name.is_empty())
+}
+
+/// The cover Spotify shows for a playlist without a picture: a mosaic of the first
+/// four different covers of its tracks, or the only one there is.
+async fn mosaic(session: &Session, uris: Vec<String>) -> Result<Option<String>, Error> {
+    if uris.is_empty() {
+        return Ok(None);
+    }
+    let request = BatchedEntityRequest {
+        entity_request: uris.iter().map(|uri| track_request(uri)).collect(),
+        ..BatchedEntityRequest::default()
+    };
+    let response = session.spclient().get_extended_metadata(request).await?;
+    let mut found: HashMap<_, _> = response
+        .extended_metadata
+        .iter()
+        .flat_map(|array| &array.extension_data)
+        .filter(|data| data.header.status_code == STATUS_OK)
+        .filter_map(|data| {
+            let cover = cover_id(&data.entity_uri, &data.extension_data.value)?;
+            Some((data.entity_uri.clone(), cover))
+        })
+        .collect();
+    let mut covers: Vec<String> = Vec::new();
+    for cover in uris.iter().filter_map(|uri| found.remove(uri)) {
+        if !covers.contains(&cover) {
+            covers.push(cover);
+        }
+    }
+    Ok(match covers.len() {
+        0 => None,
+        count if count < MOSAIC_TILES => covers.first().map(|cover| format!("{IMAGE_URL}{cover}")),
+        _ => Some(format!("{MOSAIC_URL}{}", covers[..MOSAIC_TILES].concat())),
+    })
+}
+
+/// The hexadecimal ID of the default-size cover of a track's album or of an episode.
+fn cover_id(uri: &str, bytes: &[u8]) -> Option<String> {
+    let images = if uri.starts_with(EPISODE_PREFIX) {
+        metadata::Episode::parse_from_bytes(bytes)
+            .ok()?
+            .cover_image
+            .image
+            .clone()
+    } else {
+        metadata::Track::parse_from_bytes(bytes)
+            .ok()?
+            .album
+            .cover_group
+            .image
+            .clone()
+    };
+    let image = images
+        .iter()
+        .find(|image| image.size() == metadata::image::Size::DEFAULT)
+        .or(images.first())?;
+    Some(hex(image.file_id()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut text, byte| {
+        write!(text, "{byte:02x}").expect("writing to a String cannot fail");
+        text
+    })
+}
+
+/// Playlist descriptions are HTML: links are kept as their text, entities decoded.
+fn plain_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut characters = html.chars().peekable();
+    while let Some(character) = characters.next() {
+        // A tag starts with a letter or a slash; a lone `<` is text.
+        let opens_tag = character == '<'
+            && characters
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphabetic() || *next == '/');
+        match character {
+            _ if opens_tag => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => text.push(character),
+            _ => {}
+        }
+    }
+    [
+        ("&quot;", "\""),
+        ("&#x27;", "'"),
+        ("&#39;", "'"),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(text, |text, (entity, character)| {
+        text.replace(entity, character)
+    })
+}
+
 /// The track or episode that `bytes` describe, unless Spotify described it incompletely.
 fn describe(uri: &str, bytes: &[u8]) -> Option<Track> {
     let found = if uri.starts_with(EPISODE_PREFIX) {
@@ -315,6 +479,22 @@ mod tests {
 
     fn entry(uri: &str, name: Option<&str>) -> (String, Option<String>) {
         (uri.to_owned(), name.map(str::to_owned))
+    }
+
+    #[test]
+    fn descriptions_lose_their_html() {
+        assert_eq!(
+            super::plain_text(
+                "Chill beats with <a href=\"spotify:playlist:x\">Lofi Girl</a> &amp; friends. It&#x27;s &quot;on&quot;"
+            ),
+            "Chill beats with Lofi Girl & friends. It's \"on\""
+        );
+        assert_eq!(super::plain_text("1 < 2"), "1 < 2");
+    }
+
+    #[test]
+    fn ids_print_as_hexadecimal() {
+        assert_eq!(super::hex(&[0xab, 0x67, 0x00, 0x0f]), "ab67000f");
     }
 
     #[test]
