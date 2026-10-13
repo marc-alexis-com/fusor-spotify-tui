@@ -6,7 +6,7 @@ use super::{
     listing::Source,
 };
 use crate::{
-    cover::{self, Slot},
+    cover::{self, Picture, Slot},
     spotify::{self, ArtistPage, Catalog, PlaylistDetails},
 };
 use std::{rc::Rc, time::Duration};
@@ -34,7 +34,7 @@ pub(crate) struct HeaderInfo {
 #[derive(Clone)]
 pub(crate) struct Header {
     info: Rc<HeaderInfo>,
-    pixels: Option<Rc<[u8]>>,
+    pixels: Option<Rc<Picture>>,
 }
 
 impl HeaderInfo {
@@ -303,7 +303,7 @@ async fn header(
         Some(url) => cover::fetch(http, url, Slot::Header)
             .await
             .ok()
-            .map(Rc::from),
+            .map(Rc::new),
         None => None,
     };
     Ok(Header {
