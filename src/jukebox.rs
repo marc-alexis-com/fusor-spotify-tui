@@ -65,6 +65,10 @@ pub(crate) struct Jukebox {
     window: Signal<Window>,
     history: RefCell<Vec<(Listing, Window)>>,
     generation: Cell<u64>,
+    /// When `g` was pressed, while a second `g` would go to the top.
+    pending_g: Cell<Option<std::time::Instant>>,
+    /// Whether the selection follows the end of the list while the rest loads, after End or `G`.
+    to_end: Cell<bool>,
     search: Signal<String>,
     /// The artists, albums, playlists and podcasts of the last search.
     found: Signal<Option<Found>>,
@@ -109,6 +113,8 @@ impl FromInputs for Jukebox {
             window: signal(Window::default()),
             history: RefCell::new(Vec::new()),
             generation: Cell::new(0),
+            pending_g: Cell::new(None),
+            to_end: Cell::new(false),
             search: signal(String::new()),
             found: signal(None),
             now: signal(NowPlaying::default()),
