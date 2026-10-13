@@ -75,7 +75,7 @@ pub(crate) struct Jukebox {
     found: Signal<Option<Found>>,
     now: Signal<NowPlaying>,
     clock: Signal<usize>,
-    /// Frames of the equalizer, which counts faster than the clock.
+    /// Frames of the progress bar, which counts faster than the clock while music plays.
     frame: Signal<u64>,
     bar_width: Signal<usize>,
     /// The URL of the cover the terminal shows, once it is there.
