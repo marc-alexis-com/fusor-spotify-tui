@@ -18,7 +18,8 @@ const TICK: Duration = Duration::from_millis(250);
 pub(super) const SEEK_STEP: Duration = Duration::from_secs(10);
 /// One step of the volume keys: 5% of the speaker's range.
 const VOLUME_STEP: u16 = u16::MAX / 20;
-const VOLUME_CELLS: u32 = 10;
+/// The bars of the volume meter, rising from left to right.
+const VOLUME_BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const PERCENT: u32 = 100;
 /// Shades of the progress bar's edge cell between gray and green.
 const PROGRESS_STEPS: usize = 8;
@@ -497,26 +498,30 @@ impl Jukebox {
         }
     }
 
-    pub(super) fn volume_label(&self) -> String {
-        // Rounded: one step down from full volume is 95%, not 94%.
+    /// The volume in percent, rounded: one step down from full volume is 95%, not 94%.
+    fn percent(&self) -> u32 {
         let full = u32::from(u16::MAX);
-        let percent = self
-            .now
-            .with(|now| (u32::from(now.volume) * PERCENT + full / 2) / full);
-        let filled = percent.div_ceil(PERCENT / VOLUME_CELLS);
-        let levels = &icons::get().volume;
-        // Silent, then three equal thirds of the range.
-        let level = levels[percent.div_ceil(PERCENT / 3).min(3) as usize];
-        let icon = if level.is_empty() {
+        self.now
+            .with(|now| (u32::from(now.volume) * PERCENT + full / 2) / full)
+    }
+
+    /// The Nerd Font icon of the volume's level, silent then three equal thirds.
+    pub(super) fn volume_icon(&self) -> String {
+        let level = icons::get().volume[self.percent().div_ceil(PERCENT / 3).min(3) as usize];
+        if level.is_empty() {
             String::new()
         } else {
             format!("{level} ")
-        };
-        format!(
-            "{icon}{}{} {percent:>3}%",
-            "▮".repeat(filled as usize),
-            "▯".repeat(VOLUME_CELLS.saturating_sub(filled) as usize)
-        )
+        }
+    }
+
+    /// The bars of the volume meter that are lit and those that are not.
+    pub(super) fn volume_meter(&self) -> (String, String) {
+        volume_meter(self.percent())
+    }
+
+    pub(super) fn volume_percent(&self) -> String {
+        format!(" {:>3}%", self.percent())
     }
 
     pub(super) fn shuffle_on(&self) -> bool {
@@ -566,6 +571,16 @@ impl Progress {
     }
 }
 
+/// A meter of bars that rise from left to right, lit up to `percent`.
+fn volume_meter(percent: u32) -> (String, String) {
+    let lit = (percent * VOLUME_BARS.len() as u32).div_ceil(PERCENT) as usize;
+    let lit = lit.min(VOLUME_BARS.len());
+    (
+        VOLUME_BARS[..lit].iter().collect(),
+        VOLUME_BARS[lit..].iter().collect(),
+    )
+}
+
 /// The player alone names neither the artists nor the album.
 fn details(track: &Track) -> String {
     [track.artist_names(), track.album.name.clone()]
@@ -582,7 +597,7 @@ fn label(length: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Album, NowPlaying, Repeat, Track, details};
+    use super::{Album, NowPlaying, Repeat, Track, details, volume_meter};
     use crate::spotify::Artist;
     use std::time::Duration;
 
@@ -607,6 +622,16 @@ mod tests {
                 left: 0,
             }
         );
+    }
+
+    #[test]
+    fn the_volume_meter_lights_its_bars_in_order() {
+        let lit = |percent| volume_meter(percent).0;
+        assert_eq!(volume_meter(0), (String::new(), "▁▂▃▄▅▆▇█".into()));
+        assert_eq!(lit(1), "▁");
+        assert_eq!(lit(50), "▁▂▃▄");
+        assert_eq!(lit(95), "▁▂▃▄▅▆▇█");
+        assert_eq!(volume_meter(100), ("▁▂▃▄▅▆▇█".into(), String::new()));
     }
 
     #[test]
