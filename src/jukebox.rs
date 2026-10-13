@@ -10,13 +10,14 @@ mod view;
 
 use crate::spotify::{self, Catalog, LibraryEntry, PlaylistDetails, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
+use header::Header;
 use hypercmd::{Error, Node, Services};
 use listing::{Listing, Source, Window};
 use playback::NowPlaying;
 use results::Found;
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
     rc::Rc,
 };
@@ -79,6 +80,14 @@ pub(crate) struct Jukebox {
     playlist: Signal<Option<Rc<PlaylistDetails>>>,
     /// The URL of the playlist cover the terminal shows, once it is there.
     playlist_cover: Signal<Option<String>>,
+    /// Playlist headers already loaded, by playlist URI.
+    headers: RefCell<HashMap<String, Header>>,
+    /// Playlist headers on their way.
+    fetching_headers: RefCell<HashSet<String>>,
+    /// Whether the tracks of a playlist wait for its header.
+    header_pending: Signal<bool>,
+    /// The playlist the sidebar rests on, whose header may load ahead of Enter.
+    focused_playlist: RefCell<Option<String>>,
     help: Signal<bool>,
     /// Whether a shelf has the focus, which outlines the sidebar.
     shelves_focused: Signal<bool>,
@@ -118,6 +127,10 @@ impl FromInputs for Jukebox {
             cover: signal(None),
             playlist: signal(None),
             playlist_cover: signal(None),
+            headers: RefCell::new(HashMap::new()),
+            fetching_headers: RefCell::new(HashSet::new()),
+            header_pending: signal(false),
+            focused_playlist: RefCell::new(None),
             help: signal(false),
             shelves_focused: signal(false),
             notice: signal(None),

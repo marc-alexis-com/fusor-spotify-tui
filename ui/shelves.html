@@ -11,7 +11,7 @@
     <p class="pane-title playlists-title">PLAYLISTS</p>
     <div id="playlists">
       <ForEach items="{{ state.jukebox.shelf_rows() }}" key="{{ |row| row.key.clone() }}">
-        <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)"
+        <button class="shelf" on:focus="state.jukebox.focus_shelf(&item.get())" on:blur="state.jukebox.shelves_focused.set(false)"
                 class:folder="{{ item.get().is_folder() }}"
                 class:current="{{ item.get().current }}"
                 on:click="state.jukebox.choose_shelf(&item.get())">{{
