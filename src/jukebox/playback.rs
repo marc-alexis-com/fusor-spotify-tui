@@ -19,7 +19,7 @@ pub(super) const SEEK_STEP: Duration = Duration::from_secs(10);
 /// One step of the volume keys: 5% of the speaker's range.
 const VOLUME_STEP: u16 = u16::MAX / 20;
 /// Cells of the volume bar.
-const VOLUME_CELLS: u32 = 12;
+const VOLUME_CELLS: u32 = 8;
 const PERCENT: u32 = 100;
 /// Shades of the progress bar's edge cell between gray and green.
 const PROGRESS_STEPS: usize = 8;
@@ -651,10 +651,10 @@ mod tests {
     #[test]
     fn the_volume_bar_fills_up_to_the_volume() {
         let loud = |percent| volume_bar(percent).0.chars().count();
-        assert_eq!(volume_bar(0), (String::new(), "━".repeat(12)));
+        assert_eq!(volume_bar(0), (String::new(), "━".repeat(8)));
         assert_eq!(loud(1), 1);
-        assert_eq!(loud(50), 6);
-        assert_eq!(volume_bar(100), ("━".repeat(12), String::new()));
+        assert_eq!(loud(50), 4);
+        assert_eq!(volume_bar(100), ("━".repeat(8), String::new()));
     }
 
     #[test]

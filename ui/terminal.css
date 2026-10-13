@@ -148,7 +148,7 @@ th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
 .edge5 { color: #298B4C; }
 .edge6 { color: #259A4E; }
 .edge7 { color: #21AA51; }
-.volume { height: 1ch; white-space: pre; }
+.volume { height: 1ch; max-width: 100%; white-space: pre; overflow: hidden; padding: 0 1ch 0 0; }
 .volume-icon { color: #B3B3B3; }
 
 .notice { height: 1ch; padding: 0 1ch; white-space: pre; overflow: hidden; color: #1DB954; }
