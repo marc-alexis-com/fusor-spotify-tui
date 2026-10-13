@@ -69,7 +69,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if cover::supported() {
         // kitty keeps an image until told otherwise, even once the player is gone.
         cover::clear(cover::Slot::Player)?;
-        cover::clear(cover::Slot::Playlist)?;
+        cover::clear(cover::Slot::Header)?;
     }
     Ok(())
 }

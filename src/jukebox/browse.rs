@@ -1,8 +1,11 @@
-use super::library_search::{LikedCache, liked_tracks, matching_tracks};
 use super::{
     Jukebox, Tone,
     keys::Jump,
     listing::{Listing, Loading, Row, Source},
+};
+use super::{
+    artist::{ArtistCache, artist_tracks},
+    library_search::{LikedCache, liked_tracks, matching_tracks},
 };
 use crate::spotify::{self, Catalog, Play, search_uri};
 use hypercmd::{Error, Event, EventPayload, Input, Key};
@@ -60,7 +63,8 @@ impl Jukebox {
             return;
         };
         match &source {
-            Source::Playlist(playlist) => self.load_playlist_header(&playlist.uri),
+            Source::Playlist(playlist) => self.load_header(&playlist.uri),
+            Source::Artist(artist) => self.load_header(&artist.uri),
             Source::Search(text) if !text.is_empty() => self.load_results(text),
             _ => {}
         }
@@ -68,8 +72,8 @@ impl Jukebox {
         let generation = self.next_generation();
         self.listing.set(Listing::new(source.clone()));
         self.window.update(|window| window.select(0, 0));
-        let liked = self.liked.clone();
-        let task = async move { resolve(&catalog, &source, &liked).await };
+        let (liked, artists) = (self.liked.clone(), self.artists.clone());
+        let task = async move { resolve(&catalog, &source, &liked, &artists).await };
         self.load(generation, task, |jukebox, uris| {
             jukebox.listing.update(|listing| listing.uris = uris.into());
             jukebox.load_more();
@@ -396,12 +400,22 @@ impl Jukebox {
         }
         let window = self.window.get();
         let playing = self.playing_uri();
-        self.listing
-            .with(|listing| listing.rows(window, playing.as_deref()))
+        let mut rows = self
+            .listing
+            .with(|listing| listing.rows(window, playing.as_deref()));
+        // An artist's own name would fill its column: how often each track was played does.
+        if let Some(plays) = self.listed_artist().and_then(|uri| self.plays(&uri)) {
+            for row in &mut rows {
+                row.artist = plays.get(&row.uri).cloned().unwrap_or_default();
+            }
+        }
+        rows
     }
 
     pub(super) fn artist_heading(&self) -> &'static str {
-        if self.listing.with(Listing::episodes_only) {
+        if self.listed_artist().is_some() {
+            "Plays"
+        } else if self.listing.with(Listing::episodes_only) {
             "Podcast"
         } else {
             "Artist"
@@ -414,6 +428,14 @@ impl Jukebox {
         } else {
             "Album"
         }
+    }
+
+    /// The URI of the listed artist.
+    fn listed_artist(&self) -> Option<String> {
+        self.listing.with(|listing| match &listing.source {
+            Source::Artist(artist) => Some(artist.uri.clone()),
+            _ => None,
+        })
     }
 
     pub(super) fn listing_title(&self) -> String {
@@ -458,6 +480,7 @@ async fn resolve(
     catalog: &Catalog,
     source: &Source,
     liked: &LikedCache,
+    artists: &ArtistCache,
 ) -> Result<Vec<String>, spotify::Error> {
     let context = match source {
         Source::Search(text) | Source::Library(text) if text.is_empty() => return Ok(Vec::new()),
@@ -470,7 +493,9 @@ async fn resolve(
         Source::Liked => catalog.liked_uri(),
         Source::Playlist(playlist) => return catalog.playlist_tracks(playlist.uri.clone()).await,
         Source::Album(album) | Source::Show(album) => album.uri.clone(),
-        Source::Artist(artist) => artist.uri.clone(),
+        Source::Artist(artist) => {
+            return artist_tracks(catalog, artists, artist.uri.clone()).await;
+        }
     };
     catalog.context_tracks(context).await
 }

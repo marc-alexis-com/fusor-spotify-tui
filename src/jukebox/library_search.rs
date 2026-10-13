@@ -162,7 +162,12 @@ impl Jukebox {
         let results = self
             .library
             .with(|library| library_results(&tracks, library, text));
-        Some(Found::Ready(text.to_owned(), Rc::new(results)))
+        let boxes = vec![
+            ("Artists", results.artists),
+            ("Albums", results.albums),
+            ("Playlists", results.playlists),
+        ];
+        Some(Found::Ready(text.to_owned(), Rc::new(boxes)))
     }
 }
 

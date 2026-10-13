@@ -428,7 +428,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Playlist descriptions are HTML: links are kept as their text, entities decoded.
-fn plain_text(html: &str) -> String {
+pub(super) fn plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut in_tag = false;
     let mut characters = html.chars().peekable();

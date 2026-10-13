@@ -1,3 +1,4 @@
+mod artist;
 mod browse;
 mod header;
 mod keys;
@@ -9,7 +10,7 @@ mod results;
 mod session;
 mod view;
 
-use crate::spotify::{self, Catalog, LibraryEntry, PlaylistDetails, Speaker};
+use crate::spotify::{self, Catalog, LibraryEntry, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
 use header::Header;
 use hypercmd::{Error, Node, Services};
@@ -87,15 +88,17 @@ pub(crate) struct Jukebox {
     bar_width: Signal<usize>,
     /// The URL of the cover the terminal shows, once it is there.
     cover: Signal<Option<String>>,
-    /// The details of the playlist opened last, for the header above its tracks.
-    playlist: Signal<Option<Rc<PlaylistDetails>>>,
-    /// The URL of the playlist cover the terminal shows, once it is there.
-    playlist_cover: Signal<Option<String>>,
-    /// Playlist headers already loaded, by playlist URI.
+    /// The header of the playlist or artist opened last, above its tracks.
+    header: Signal<Option<Rc<header::HeaderInfo>>>,
+    /// The URL of the header picture the terminal shows, once it is there.
+    header_cover: Signal<Option<String>>,
+    /// Artist pages already loaded, for their headers, tracks and boxes.
+    artists: artist::ArtistCache,
+    /// Headers already loaded, by playlist or artist URI.
     headers: RefCell<HashMap<String, Header>>,
     /// Playlist headers on their way.
     fetching_headers: RefCell<HashSet<String>>,
-    /// Whether the tracks of a playlist wait for its header.
+    /// Whether the tracks of a playlist or an artist wait for its header.
     header_pending: Signal<bool>,
     /// The playlist the sidebar rests on, whose header may load ahead of Enter.
     focused_playlist: RefCell<Option<String>>,
@@ -142,8 +145,9 @@ impl FromInputs for Jukebox {
             border_fade: signal(playback::FADE_LEVELS),
             bar_width: signal(0),
             cover: signal(None),
-            playlist: signal(None),
-            playlist_cover: signal(None),
+            header: signal(None),
+            header_cover: signal(None),
+            artists: Rc::default(),
             headers: RefCell::new(HashMap::new()),
             fetching_headers: RefCell::new(HashSet::new()),
             header_pending: signal(false),

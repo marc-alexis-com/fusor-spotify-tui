@@ -1,3 +1,4 @@
+mod artist;
 mod auth;
 mod catalog;
 mod model;
@@ -9,8 +10,8 @@ mod speaker;
 pub(crate) use auth::{Authorization, Token, forget, stored_refresh_token};
 pub(crate) use catalog::{Catalog, search_uri};
 pub(crate) use model::{
-    Album, Artist, LibraryEntry, LibraryItem, Playlist, PlaylistDetails, Repeat, SearchItem,
-    SearchKind, SearchResults, Track,
+    Album, Artist, ArtistPage, LibraryEntry, LibraryItem, Playlist, PlaylistDetails, Repeat,
+    SearchItem, SearchKind, SearchResults, Track,
 };
 pub(crate) use speaker::{
     Command, Connection, DEVICE_NAME, Events, INITIAL_VOLUME, Lost, Mode, Play, Speaker,
@@ -36,6 +37,8 @@ pub(crate) enum Error {
     Keychain(#[from] keyring::Error),
     #[error("No audio output is available on this computer")]
     NoAudio,
+    #[error("Spotify did not send the artist's page ({0})")]
+    Artist(String),
     #[error("Spotify search could not find artists, albums, playlists or podcasts ({0})")]
     Search(String),
     #[error("Cannot read the album cover ({0})")]

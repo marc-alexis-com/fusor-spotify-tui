@@ -54,8 +54,8 @@ const DIACRITICS: [char; 256] = [
 pub(crate) enum Slot {
     /// Left of the now-playing bar.
     Player,
-    /// Left of the playlist's name, above its tracks.
-    Playlist,
+    /// Left of the name of a playlist or an artist, above its tracks.
+    Header,
 }
 
 impl Slot {
@@ -63,14 +63,14 @@ impl Slot {
     pub(crate) const fn columns(self) -> usize {
         match self {
             Self::Player => 6,
-            Self::Playlist => 10,
+            Self::Header => 10,
         }
     }
 
     pub(crate) const fn rows(self) -> usize {
         match self {
             Self::Player => 3,
-            Self::Playlist => 5,
+            Self::Header => 5,
         }
     }
 
@@ -78,20 +78,20 @@ impl Slot {
     const fn pixels(self) -> u32 {
         match self {
             Self::Player => 160,
-            Self::Playlist => 240,
+            Self::Header => 240,
         }
     }
 
     /// The color of the placeholders, which is also the low bits of the image's ID:
     /// a true color, or the exact 256-color cube entry hypercmd turns it into
     /// otherwise. The high byte comes from [`instance`]. The colors must match
-    /// `.cover-row` and `.playlist-cover-row` in `ui/terminal.css`.
+    /// `.cover-row` and `.header-cover-row` in `ui/terminal.css`.
     const fn color(self, true_color: bool) -> u32 {
         match (self, true_color) {
             (Self::Player, true) => 0x5F_87AF,
             (Self::Player, false) => 67,
-            (Self::Playlist, true) => 0x5F_87D7,
-            (Self::Playlist, false) => 68,
+            (Self::Header, true) => 0x5F_87D7,
+            (Self::Header, false) => 68,
         }
     }
 }
@@ -283,7 +283,7 @@ mod tests {
     fn ids_keep_the_color_in_the_low_bits() {
         assert_eq!(id(Slot::Player, 200, true), 0xC85F_87AF);
         assert_eq!(id(Slot::Player, 1, false), 0x0100_0043);
-        assert_eq!(id(Slot::Playlist, 1, true), 0x015F_87D7);
-        assert_eq!(id(Slot::Playlist, 1, false), 0x0100_0044);
+        assert_eq!(id(Slot::Header, 1, true), 0x015F_87D7);
+        assert_eq!(id(Slot::Header, 1, false), 0x0100_0044);
     }
 }

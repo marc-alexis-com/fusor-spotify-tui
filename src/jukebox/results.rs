@@ -4,11 +4,14 @@ use crate::spotify::{Album, Artist, Playlist, SearchItem, SearchKind, SearchResu
 use hypercmd::{Event, EventPayload, Input, Key, Node};
 use std::rc::Rc;
 
-/// What the sections show for the search in the track list.
+/// The boxes below the tracks: each title with its results.
+pub(crate) type Boxes = Vec<(&'static str, Vec<Rc<SearchItem>>)>;
+
+/// What the boxes show for the search or artist in the track list.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Found {
     Loading(String),
-    Ready(String, Rc<SearchResults>),
+    Ready(String, Rc<Boxes>),
     Failed(String, String),
 }
 
@@ -39,53 +42,48 @@ impl Found {
 }
 
 /// The boxes of a catalog search, in the order they show.
-const CATALOG_BOXES: [(&str, SearchKind); 4] = [
-    ("Artists", SearchKind::Artist),
-    ("Albums", SearchKind::Album),
-    ("Playlists", SearchKind::Playlist),
-    ("Podcasts", SearchKind::Podcast),
-];
+pub(crate) const CATALOG_BOXES: [&str; 4] = ["Artists", "Albums", "Playlists", "Podcasts"];
 
-/// A library search has no podcasts: the library holds no shows.
-const LIBRARY_BOXES: [(&str, SearchKind); 3] = [
-    ("Artists", SearchKind::Artist),
-    ("Albums", SearchKind::Album),
-    ("Playlists", SearchKind::Playlist),
-];
+/// The boxes of a catalog search's results.
+pub(crate) fn catalog_boxes(results: &SearchResults) -> Boxes {
+    CATALOG_BOXES
+        .into_iter()
+        .zip([
+            &results.artists,
+            &results.albums,
+            &results.playlists,
+            &results.podcasts,
+        ])
+        .map(|(title, items)| (title, items.clone()))
+        .collect()
+}
 
-/// The boxes for `found`, in the order they show.
-pub(crate) fn sections(found: &Found, boxes: &[(&'static str, SearchKind)]) -> Vec<ResultSection> {
+/// The boxes for `found`, titled `titles` until it is ready.
+pub(crate) fn sections(found: &Found, titles: &[&'static str]) -> Vec<ResultSection> {
+    let (state, boxes): (_, Boxes) = match found {
+        Found::Loading(_) => (
+            "loading",
+            titles.iter().map(|title| (*title, Vec::new())).collect(),
+        ),
+        Found::Failed(..) => (
+            "failed",
+            titles.iter().map(|title| (*title, Vec::new())).collect(),
+        ),
+        Found::Ready(_, boxes) => ("ready", boxes.as_ref().clone()),
+    };
     boxes
-        .iter()
-        .copied()
-        .map(|(title, kind)| {
-            let (rows, note) = match found {
-                Found::Loading(_) => (Vec::new(), "Searching…".to_owned()),
-                Found::Failed(_, error) => (Vec::new(), error.clone()),
-                Found::Ready(_, results) => {
-                    let items = match kind {
-                        SearchKind::Artist => &results.artists,
-                        SearchKind::Album => &results.albums,
-                        SearchKind::Playlist => &results.playlists,
-                        SearchKind::Podcast => &results.podcasts,
-                    };
-                    let note = if items.is_empty() {
-                        format!("No {}", title.to_lowercase())
-                    } else {
-                        String::new()
-                    };
-                    (items.iter().map(|item| Rc::new(row(item))).collect(), note)
-                }
-            };
-            let state = match found {
-                Found::Loading(_) => "loading",
-                Found::Ready(..) => "ready",
-                Found::Failed(..) => "failed",
+        .into_iter()
+        .map(|(title, items)| {
+            let note = match found {
+                Found::Loading(_) => "Searching…".to_owned(),
+                Found::Failed(_, error) => error.clone(),
+                Found::Ready(..) if items.is_empty() => format!("No {}", title.to_lowercase()),
+                Found::Ready(..) => String::new(),
             };
             ResultSection {
                 key: format!("{title}\n{state}\n{}", found.query()),
                 title,
-                rows,
+                rows: items.iter().map(|item| Rc::new(row(item))).collect(),
                 note,
             }
         })
@@ -131,7 +129,7 @@ impl Jukebox {
         let (found, text) = (self.found.clone(), text.to_owned());
         let started = self.services.spawn(&self.owner, async move {
             let outcome = match catalog.search(text.clone()).await {
-                Ok(results) => Found::Ready(text.clone(), Rc::new(results)),
+                Ok(results) => Found::Ready(text.clone(), Rc::new(catalog_boxes(&results))),
                 Err(error) => Found::Failed(text.clone(), error.to_string()),
             };
             // A newer search may have started meanwhile.
@@ -144,21 +142,31 @@ impl Jukebox {
         }
     }
 
-    /// The sections of the search in the track list, if it is one with words.
+    /// The boxes of the search or artist in the track list.
     fn current_found(&self) -> Option<Found> {
-        let (text, library) = self.listing.with(|listing| match &listing.source {
-            Source::Search(text) if !text.is_empty() => Some((text.clone(), false)),
-            // The boxes follow the tracks, which load the Liked Songs first.
+        enum Page {
+            Search(String),
+            Library(String),
+            Artist(String),
+        }
+        let page = self.listing.with(|listing| match &listing.source {
+            Source::Search(text) if !text.is_empty() => Some(Page::Search(text.clone())),
+            // The boxes follow the tracks, which load the Liked Songs or the artist first.
             Source::Library(text) if !text.is_empty() && !listing.uris.is_empty() => {
-                Some((text.clone(), true))
+                Some(Page::Library(text.clone()))
+            }
+            Source::Artist(artist) if !listing.uris.is_empty() => {
+                Some(Page::Artist(artist.uri.clone()))
             }
             _ => None,
         })?;
-        if library {
-            return self.library_found(&text);
+        match page {
+            Page::Search(text) => self
+                .found
+                .with(|found| found.clone().filter(|found| found.query() == text)),
+            Page::Library(text) => self.library_found(&text),
+            Page::Artist(uri) => self.artist_found(&uri),
         }
-        self.found
-            .with(|found| found.clone().filter(|found| found.query() == text))
     }
 
     pub(super) fn results_shown(&self) -> bool {
@@ -166,13 +174,13 @@ impl Jukebox {
     }
 
     pub(super) fn result_sections(&self) -> Vec<Rc<ResultSection>> {
-        let boxes: &[_] = if self.searching_library() {
-            &LIBRARY_BOXES
-        } else {
-            &CATALOG_BOXES
-        };
         self.current_found()
-            .map(|found| sections(&found, boxes).into_iter().map(Rc::new).collect())
+            .map(|found| {
+                sections(&found, &CATALOG_BOXES)
+                    .into_iter()
+                    .map(Rc::new)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -278,7 +286,7 @@ fn beside(
 
 #[cfg(test)]
 mod tests {
-    use super::{CATALOG_BOXES, Found, sections, source};
+    use super::{CATALOG_BOXES, Found, catalog_boxes, sections, source};
     use crate::{
         jukebox::listing::Source,
         spotify::{SearchItem, SearchKind, SearchResults},
@@ -302,7 +310,7 @@ mod tests {
             ..SearchResults::default()
         };
         let shown = sections(
-            &Found::Ready("daft".into(), Rc::new(results)),
+            &Found::Ready("daft".into(), Rc::new(catalog_boxes(&results))),
             &CATALOG_BOXES,
         );
         let titles: Vec<_> = shown.iter().map(|section| section.title).collect();
