@@ -11,8 +11,6 @@ use std::io::{self, Write};
 /// Spotify sends 64, 300 and 640 pixel covers; the smallest that is sharp enough wins.
 const SHARP_ENOUGH: i32 = 160;
 const CHUNK: usize = 4096;
-/// The radius of the rounded corners, as a share of the cover's side.
-const CORNER: f32 = 0.12;
 const PLACEHOLDER: char = '\u{10EEEE}';
 /// The diacritics of kitty's `rowcolumn-diacritics.txt` that stand for 0 to 255.
 const DIACRITICS: [char; 256] = [
@@ -165,29 +163,38 @@ pub(crate) async fn fetch(
     let mut pixels = picture
         .resize_exact(slot.pixels(), slot.pixels(), FilterType::Triangle)
         .to_rgba8();
-    round_corners(&mut pixels);
+    round_corners(&mut pixels, slot);
     Ok(pixels.into_raw())
 }
 
-/// Makes the corners transparent, with a smooth edge one pixel wide.
-fn round_corners(pixels: &mut image::RgbaImage) {
+/// Makes the corners transparent, with a smooth edge one pixel wide. They round
+/// like the terminal's rounded borders: a quarter ellipse from the middle of one
+/// side of a cell to the middle of the next, so half a cell wide and half a cell
+/// tall, whatever the size of the image.
+fn round_corners(pixels: &mut image::RgbaImage, slot: Slot) {
     let side = pixels.width() as f32;
-    let radius = side * CORNER;
+    let radius = (
+        side / (2 * slot.columns()) as f32,
+        side / (2 * slot.rows()) as f32,
+    );
     for (x, y, pixel) in pixels.enumerate_pixels_mut() {
         let coverage = corner_coverage(x as f32 + 0.5, y as f32 + 0.5, side, radius);
         pixel[3] = (f32::from(pixel[3]) * coverage).round() as u8;
     }
 }
 
-/// How much of the pixel centered on (`x`, `y`) lies inside the rounded square.
-fn corner_coverage(x: f32, y: f32, side: f32, radius: f32) -> f32 {
-    // The distance past the nearest corner's circle center, along each axis.
-    let outside_x = (radius - x).max(x - (side - radius)).max(0.0);
-    let outside_y = (radius - y).max(y - (side - radius)).max(0.0);
+/// How much of the pixel centered on (`x`, `y`) lies inside the square whose
+/// corners are quarter ellipses of radii `radius`.
+fn corner_coverage(x: f32, y: f32, side: f32, (across, down): (f32, f32)) -> f32 {
+    // How far past the nearest corner's center, along each axis.
+    let outside_x = (across - x).max(x - (side - across)).max(0.0);
+    let outside_y = (down - y).max(y - (side - down)).max(0.0);
     if outside_x == 0.0 || outside_y == 0.0 {
         return 1.0;
     }
-    (radius - outside_x.hypot(outside_y) + 0.5).clamp(0.0, 1.0)
+    let distance = (outside_x / across).hypot(outside_y / down);
+    // In pixels, about: the ellipse's edge is one pixel wide along its smaller radius.
+    ((1.0 - distance) * across.min(down) + 0.5).clamp(0.0, 1.0)
 }
 
 /// Replaces the cover the terminal holds for `slot` with `pixels`.
@@ -266,17 +273,17 @@ mod tests {
     }
 
     #[test]
-    fn corners_are_cut_round() {
-        let (side, radius) = (100.0, 12.0);
-        let coverage = |x, y| super::corner_coverage(x, y, side, radius);
+    fn corners_are_cut_like_the_borders() {
+        // A cover 10 cells wide and 5 tall rounds 5 pixels across and 10 down.
+        let coverage = |x, y| super::corner_coverage(x, y, 100.0, (5.0, 10.0));
         assert_eq!(coverage(0.5, 0.5), 0.0);
         assert_eq!(coverage(99.5, 99.5), 0.0);
         assert_eq!(coverage(50.0, 0.5), 1.0);
         assert_eq!(coverage(0.5, 50.0), 1.0);
-        assert_eq!(coverage(12.0, 12.0), 1.0);
-        let on_circle = 12.0 - 12.0 * std::f32::consts::FRAC_1_SQRT_2;
-        let edge = coverage(on_circle, on_circle);
-        assert!(edge > 0.3 && edge < 0.7, "{edge}");
+        assert_eq!(coverage(5.0, 10.0), 1.0);
+        // Near the corner, the narrow radius across cuts sooner than the tall one down.
+        assert!(coverage(0.5, 2.0) < 0.5);
+        assert!(coverage(4.5, 0.5) < 1.0);
     }
 
     #[test]
