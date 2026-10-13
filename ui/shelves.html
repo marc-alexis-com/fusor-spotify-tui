@@ -2,8 +2,10 @@
   <section id="shelves" class="shelves" class:active="{{ state.jukebox.shelves_focused.get() }}"
            on:keydown="state.jukebox.leave_shelves(&event)">
     <p class="pane-title">YOUR LIBRARY</p>
-    <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.searching() }}"
+    <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.searching_catalog() }}"
             on:click="state.jukebox.start_search()">{{ crate::icons::get().search }}Search</button>
+    <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.searching_library() }}"
+            on:click="state.jukebox.start_library_search()">{{ crate::icons::get().search }}Search your library</button>
     <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.is_current(&Source::Liked) }}"
             on:click="state.jukebox.open_shelf(Source::Liked)">{{ crate::icons::get().liked }}Liked Songs</button>
     <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.is_current(&Source::Recent) }}"
