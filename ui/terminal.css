@@ -46,7 +46,8 @@ button:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: under
 .listing-summary { color: #B3B3B3; white-space: pre; }
 .header { flex-direction: row; height: 6ch; flex-shrink: 0; gap: 2ch; padding: 0 1ch 1ch 1ch; }
 /* Its color is the image ID of the kitty placeholders: see src/cover.rs. */
-.header-cover { width: 10ch; height: 5ch; flex-shrink: 0; }
+/* As wide as its rows of placeholders, which make it square: see src/cover.rs. */
+.header-cover { height: 5ch; flex-shrink: 0; }
 .header-cover-row { height: 1ch; white-space: pre; color: #5F87D7; }
 .header-text { flex-grow: 1; flex-shrink: 1; min-width: 0; justify-content: center; }
 .header-kind { height: 1ch; color: #B3B3B3; }
@@ -119,7 +120,7 @@ th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
 .paused7 { border-color: #4C6053; }
 .paused8 { border-color: #535353; }
 /* Its color is the image ID of the kitty placeholders: see src/cover.rs. */
-.cover { width: 6ch; height: 3ch; flex-shrink: 0; }
+.cover { height: 3ch; flex-shrink: 0; }
 .cover-row { height: 1ch; white-space: pre; color: #5F87AF; }
 .now-main { flex-grow: 1; flex-shrink: 1; min-width: 0; }
 .track-line { flex-direction: row; height: 2ch; gap: 2ch; }

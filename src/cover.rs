@@ -59,12 +59,10 @@ pub(crate) enum Slot {
 }
 
 impl Slot {
-    /// Cells the cover takes.
-    pub(crate) const fn columns(self) -> usize {
-        match self {
-            Self::Player => 6,
-            Self::Header => 10,
-        }
+    /// Cells the cover takes across: as many as make it square on screen, given
+    /// how tall the terminal's cells are for their width.
+    pub(crate) fn columns(self) -> usize {
+        square_columns(self.rows(), cell_pixels())
     }
 
     pub(crate) const fn rows(self) -> usize {
@@ -142,6 +140,12 @@ pub(crate) struct Picture {
     pixels: Vec<u8>,
     width: u32,
     height: u32,
+}
+
+/// The columns that make `rows` rows of cells of `cell` pixels about square.
+fn square_columns(rows: usize, (width, height): (u32, u32)) -> usize {
+    let tall = rows as u32 * height;
+    ((tall + width / 2) / width).max(1) as usize
 }
 
 /// The size of a cell in pixels, as the terminal reports it; tmux passes it on.
@@ -293,6 +297,15 @@ mod tests {
         );
         // The last entry kitty needs for a byte, from rowcolumn-diacritics.txt.
         assert_eq!(DIACRITICS[255], '\u{A8E5}');
+    }
+
+    #[test]
+    fn covers_take_the_columns_that_make_them_square() {
+        assert_eq!(super::square_columns(5, (10, 20)), 10);
+        assert_eq!(super::square_columns(3, (10, 20)), 6);
+        // Cells of 12×30 pixels: 5 rows are 150 pixels tall, 13 columns 156 wide.
+        assert_eq!(super::square_columns(5, (12, 30)), 13);
+        assert_eq!(super::square_columns(3, (11, 29)), 8);
     }
 
     #[test]
