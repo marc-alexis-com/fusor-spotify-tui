@@ -360,6 +360,9 @@ impl Jukebox {
     }
 
     pub(super) fn rows(&self) -> Vec<Row> {
+        if self.holding_tracks() {
+            return Vec::new();
+        }
         let window = self.window.get();
         let playing = self.playing_uri();
         self.listing
@@ -391,6 +394,9 @@ impl Jukebox {
     }
 
     pub(super) fn listing_empty(&self) -> Option<&'static str> {
+        if self.holding_tracks() {
+            return None;
+        }
         self.listing
             .with(|listing| listing.is_empty().then(|| listing.source.empty_message()))
     }
@@ -400,6 +406,9 @@ impl Jukebox {
     }
 
     pub(super) fn position(&self) -> String {
+        if self.holding_tracks() {
+            return String::new();
+        }
         let window = self.window.get();
         self.listing.with(|listing| {
             if listing.tracks.is_empty() {
