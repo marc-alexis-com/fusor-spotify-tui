@@ -31,7 +31,7 @@
           <button class="control" class:on="{{ state.jukebox.repeat_mode() != Repeat::Off }}"
                   on:click="state.jukebox.cycle_repeat()">{{ state.jukebox.repeat_label() }}</button>
         </div>
-        <p class="volume"><span class="volume-icon">{{ state.jukebox.volume_icon() }}</span><span class="played">{{
+        <p class="volume" class:hidden="{{ !state.jukebox.volume_shown() }}"><span class="volume-icon">{{ state.jukebox.volume_icon() }}</span><span class="played">{{
           state.jukebox.volume_bar().0
         }}</span><span class="left">{{ state.jukebox.volume_bar().1 }}</span></p>
       </div>

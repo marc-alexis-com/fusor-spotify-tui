@@ -120,10 +120,9 @@ impl Jukebox {
         // A speaker dropped on purpose ends the watch without a loss.
         while lost.await.is_ok() {
             // Stopping the dead speaker releases its audio output and MPRIS name.
-            let volume = self
-                .speaker
-                .replace(None)
-                .map_or(INITIAL_VOLUME, |speaker| speaker.volume());
+            // The new one starts at full volume too: the system mixer sets the loudness.
+            drop(self.speaker.replace(None));
+            let volume = INITIAL_VOLUME;
             self.inform("Lost the connection to Spotify; reconnecting…");
             let Some(next) = self.reconnect_until_done(&events, volume).await else {
                 return;

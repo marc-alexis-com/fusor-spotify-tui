@@ -18,6 +18,8 @@ const TICK: Duration = Duration::from_millis(250);
 pub(super) const SEEK_STEP: Duration = Duration::from_secs(10);
 /// One step of the volume keys: 5% of the speaker's range.
 const VOLUME_STEP: u16 = u16::MAX / 20;
+/// How long the volume bar shows after the volume changes, in clock ticks: 2 seconds.
+const VOLUME_SHOWN_TICKS: usize = 8;
 /// Cells of the volume bar.
 const VOLUME_CELLS: u32 = 8;
 const PERCENT: u32 = 100;
@@ -193,6 +195,25 @@ impl Jukebox {
         self.border_fade.get() == level
     }
 
+    /// Takes a new volume, and shows the volume bar for a moment if it changed.
+    fn change_volume_shown(&self, volume: u16) {
+        let changed = self.now.with_untracked(|now| now.volume != volume);
+        self.now.update(|now| now.volume = volume);
+        if changed {
+            self.show_volume();
+        }
+    }
+
+    fn show_volume(&self) {
+        let until = self.clock.get_untracked() + VOLUME_SHOWN_TICKS;
+        self.volume_until.set(until);
+    }
+
+    /// Whether the volume bar shows: only for a moment after the volume changes.
+    pub(super) fn volume_shown(&self) -> bool {
+        self.clock.get() < self.volume_until.get()
+    }
+
     pub(super) fn follow_player(self: &Rc<Self>, events: PlayerEventChannel) -> Result<(), Error> {
         self.services
             .spawn(&self.owner, self.clone().run_player(events))
@@ -239,7 +260,7 @@ impl Jukebox {
                 self.now.update(|now| now.report(position_ms, now.playing));
             }
             PlayerEvent::Stopped { .. } => self.now.update(NowPlaying::stop),
-            PlayerEvent::VolumeChanged { volume } => self.now.update(|now| now.volume = volume),
+            PlayerEvent::VolumeChanged { volume } => self.change_volume_shown(volume),
             PlayerEvent::ShuffleChanged { shuffle } => self.now.update(|now| now.shuffle = shuffle),
             PlayerEvent::RepeatChanged { context, track } => self.now.update(|now| {
                 now.repeat = match (context, track) {
@@ -391,6 +412,7 @@ impl Jukebox {
             VolumeStep::Down => now.volume.saturating_sub(VOLUME_STEP),
         });
         self.command(Command::Volume(volume));
+        self.show_volume();
     }
 
     pub(super) fn toggle_shuffle(&self) {

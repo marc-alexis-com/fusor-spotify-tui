@@ -8,7 +8,7 @@ use librespot_core::{Session, SessionConfig, authentication::Credentials, config
 use librespot_playback::{
     audio_backend,
     config::{AudioFormat, PlayerConfig},
-    mixer::{self, Mixer, MixerConfig},
+    mixer::{self, MixerConfig},
     player::{Player, PlayerEvent, PlayerEventChannel},
 };
 use std::{sync::Arc, time::Duration};
@@ -34,7 +34,6 @@ pub(crate) type Lost = oneshot::Receiver<()>;
 pub(crate) struct Speaker {
     spirc: Arc<Spirc>,
     session: Session,
-    mixer: Arc<dyn Mixer>,
     fader: Fader,
     /// Dropped with the speaker, so that stopping it on purpose is not reported as lost.
     _watch: oneshot::Sender<()>,
@@ -81,11 +80,6 @@ impl Speaker {
         volume: u16,
     ) -> Result<Connection, Error> {
         tokio::spawn(start(access_token, events, volume)).await?
-    }
-
-    /// The volume the speaker plays at, which a replacement speaker keeps.
-    pub(crate) fn volume(&self) -> u16 {
-        self.mixer.volume()
     }
 
     pub(crate) fn play(&self, play: Play, mode: Mode) -> Result<(), Error> {
@@ -163,8 +157,7 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
         ..ConnectConfig::default()
     };
     let credentials = Credentials::with_access_token(access_token);
-    let (spirc, task) =
-        Spirc::new(config, session.clone(), credentials, player, mixer.clone()).await?;
+    let (spirc, task) = Spirc::new(config, session.clone(), credentials, player, mixer).await?;
     let task = tokio::spawn(task);
     let (watch, stopped) = oneshot::channel();
     let (report, lost) = oneshot::channel();
@@ -176,7 +169,6 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
         speaker: Speaker {
             spirc,
             session: session.clone(),
-            mixer,
             fader,
             _watch: watch,
         },
