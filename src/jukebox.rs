@@ -64,6 +64,8 @@ pub(crate) struct Jukebox {
     search: Signal<String>,
     now: Signal<NowPlaying>,
     clock: Signal<usize>,
+    /// Frames of the equalizer, which counts faster than the clock.
+    frame: Signal<u64>,
     bar_width: Signal<usize>,
     /// The URL of the cover the terminal shows, once it is there.
     cover: Signal<Option<String>>,
@@ -100,6 +102,7 @@ impl FromInputs for Jukebox {
             search: signal(String::new()),
             now: signal(NowPlaying::default()),
             clock: signal(0),
+            frame: signal(0),
             bar_width: signal(0),
             cover: signal(None),
             help: signal(false),
