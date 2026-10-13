@@ -135,7 +135,7 @@ pub(crate) fn pick<'a>(sizes: impl Iterator<Item = (i32, &'a str)>) -> Option<St
         .map(|(_, url)| (*url).to_owned())
 }
 
-/// A cover ready for the terminal: raw RGBA pixels of the exact size of its cells.
+/// A cover ready for the terminal: raw RGB pixels of the exact size of its cells.
 pub(crate) struct Picture {
     pixels: Vec<u8>,
     width: u32,
@@ -164,7 +164,7 @@ fn cell_pixels() -> (u32, u32) {
         .unwrap_or(FALLBACK_CELL)
 }
 
-/// Downloads a cover and fits it to the cells of `slot`, corners rounded. It fills
+/// Downloads a cover and fits it to the cells of `slot`. It fills
 /// them, cropped in the middle where its shape differs from theirs, as a picture
 /// of other proportions would leave bars around it.
 pub(crate) async fn fetch(
@@ -185,41 +185,14 @@ pub(crate) async fn fetch(
         .map_err(|error| crate::spotify::Error::Cover(error.to_string()))?;
     let cell = cell_pixels();
     let (width, height) = (cell.0 * slot.columns() as u32, cell.1 * slot.rows() as u32);
-    let mut pixels = picture
+    let pixels = picture
         .resize_to_fill(width, height, FilterType::Triangle)
-        .to_rgba8();
-    round_corners(&mut pixels, cell);
+        .to_rgb8();
     Ok(Picture {
         pixels: pixels.into_raw(),
         width,
         height,
     })
-}
-
-/// Makes the corners transparent, with a smooth edge one pixel wide. They round
-/// like the terminal's rounded borders: a quarter ellipse from the middle of one
-/// side of a cell to the middle of the next, half a cell wide and half a cell tall.
-fn round_corners(pixels: &mut image::RgbaImage, (cell_width, cell_height): (u32, u32)) {
-    let size = (pixels.width() as f32, pixels.height() as f32);
-    let radius = (cell_width as f32 / 2.0, cell_height as f32 / 2.0);
-    for (x, y, pixel) in pixels.enumerate_pixels_mut() {
-        let coverage = corner_coverage(x as f32 + 0.5, y as f32 + 0.5, size, radius);
-        pixel[3] = (f32::from(pixel[3]) * coverage).round() as u8;
-    }
-}
-
-/// How much of the pixel centered on (`x`, `y`) lies inside the rectangle of `size`
-/// whose corners are quarter ellipses of radii `radius`.
-fn corner_coverage(x: f32, y: f32, (width, height): (f32, f32), (across, down): (f32, f32)) -> f32 {
-    // How far past the nearest corner's center, along each axis.
-    let outside_x = (across - x).max(x - (width - across)).max(0.0);
-    let outside_y = (down - y).max(y - (height - down)).max(0.0);
-    if outside_x == 0.0 || outside_y == 0.0 {
-        return 1.0;
-    }
-    let distance = (outside_x / across).hypot(outside_y / down);
-    // In pixels, about: the ellipse's edge is one pixel wide along its smaller radius.
-    ((1.0 - distance) * across.min(down) + 0.5).clamp(0.0, 1.0)
 }
 
 /// Replaces the cover the terminal holds for `slot` with `picture`.
@@ -234,7 +207,7 @@ pub(crate) fn show(slot: Slot, picture: &Picture) -> io::Result<()> {
     for (index, chunk) in chunks.iter().enumerate() {
         let more = u8::from(index + 1 < chunks.len());
         let keys = if index == 0 {
-            format!("a=T,U=1,i={id},f=32,s={width},v={height},c={columns},r={rows},q=2,m={more}")
+            format!("a=T,U=1,i={id},f=24,s={width},v={height},c={columns},r={rows},q=2,m={more}")
         } else {
             format!("q=2,m={more}")
         };
@@ -306,20 +279,6 @@ mod tests {
         // Cells of 12×30 pixels: 5 rows are 150 pixels tall, 13 columns 156 wide.
         assert_eq!(super::square_columns(5, (12, 30)), 13);
         assert_eq!(super::square_columns(3, (11, 29)), 8);
-    }
-
-    #[test]
-    fn corners_are_cut_like_the_borders() {
-        // 10 cells of 10×24 pixels across 5 rows: corners 5 pixels wide, 12 tall.
-        let coverage = |x, y| super::corner_coverage(x, y, (100.0, 120.0), (5.0, 12.0));
-        assert_eq!(coverage(0.5, 0.5), 0.0);
-        assert_eq!(coverage(99.5, 119.5), 0.0);
-        assert_eq!(coverage(50.0, 0.5), 1.0);
-        assert_eq!(coverage(0.5, 60.0), 1.0);
-        assert_eq!(coverage(5.0, 12.0), 1.0);
-        // Near the corner, the narrow radius across cuts sooner than the tall one down.
-        assert!(coverage(0.5, 2.0) < 0.5);
-        assert!(coverage(4.5, 0.5) < 1.0);
     }
 
     #[test]
