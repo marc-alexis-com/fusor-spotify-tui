@@ -7,7 +7,44 @@ use crate::spotify::Command;
 use hypercmd::{Error, ErrorKind, Event, EventPayload, Input, Key, Node};
 use std::rc::Rc;
 
+/// How long after a first `g` a second one still makes `gg`.
+const GG_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// What `g` and `G` do in a list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Jump {
+    /// `gg`: the first row.
+    Top,
+    /// `G`: the last row.
+    Bottom,
+    /// A first `g`, waiting for the second.
+    Pending,
+}
+
 impl Jukebox {
+    /// Reads `g` and `G` as Vim does: `gg` goes to the top and `G` to the bottom.
+    pub(super) fn jump(&self, key: Key) -> Option<Jump> {
+        match key {
+            Key::Char('G') => {
+                self.pending_g.set(None);
+                Some(Jump::Bottom)
+            }
+            Key::Char('g') => {
+                let earlier = self.pending_g.take();
+                if earlier.is_some_and(|pressed| pressed.elapsed() < GG_DELAY) {
+                    Some(Jump::Top)
+                } else {
+                    self.pending_g.set(Some(std::time::Instant::now()));
+                    Some(Jump::Pending)
+                }
+            }
+            _ => {
+                self.pending_g.set(None);
+                None
+            }
+        }
+    }
+
     pub(super) fn shortcut(self: &Rc<Self>, event: &Event) -> Result<(), Error> {
         let EventPayload::Input(Input::Key { key, modifiers, .. }) = event.payload else {
             return Ok(());
@@ -69,15 +106,41 @@ impl Jukebox {
         if modifiers.control || modifiers.alt || modifiers.super_key {
             return;
         }
-        match key {
-            Key::Tab if !modifiers.shift => self.focus("tracks"),
-            Key::Char('l') => self.shelf_right(&event.target),
-            Key::Char('h') => self.shelf_left(&event.target),
-            Key::Char('j') => self.step_shelf(&event.target, true),
-            Key::Char('k') => self.step_shelf(&event.target, false),
-            _ => return,
+        let handled = match (key, self.jump(key)) {
+            (_, Some(Jump::Pending)) => true,
+            (_, Some(jump)) => {
+                let shelves = self.shelves();
+                let target = if jump == Jump::Top {
+                    shelves.first()
+                } else {
+                    shelves.last()
+                };
+                if let Some(shelf) = target {
+                    shelf.request_focus();
+                }
+                true
+            }
+            (Key::Tab, _) if !modifiers.shift => {
+                self.focus("tracks");
+                true
+            }
+            (key, _) => self.shelf_key(key, &event.target),
+        };
+        if handled {
+            event.prevent_default();
         }
-        event.prevent_default();
+    }
+
+    /// The vim-like keys of the sidebar; returns whether `key` was one.
+    fn shelf_key(&self, key: Key, target: &Node) -> bool {
+        match key {
+            Key::Char('l') => self.shelf_right(target),
+            Key::Char('h') => self.shelf_left(target),
+            Key::Char('j') => self.step_shelf(target, true),
+            Key::Char('k') => self.step_shelf(target, false),
+            _ => return false,
+        }
+        true
     }
 
     /// `h` in the track list goes to the shelf that list comes from, or the first one.
