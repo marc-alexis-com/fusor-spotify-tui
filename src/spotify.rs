@@ -1,6 +1,7 @@
 mod artist;
 mod auth;
 mod catalog;
+mod fade;
 mod model;
 #[cfg(target_os = "linux")]
 mod mpris;

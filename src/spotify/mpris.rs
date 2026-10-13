@@ -1,7 +1,7 @@
 //! Publishes the speaker on the session bus as an MPRIS player, so `playerctl`,
 //! media keys and status bars can control it.
 
-use super::{DEVICE_NAME, INITIAL_VOLUME};
+use super::{DEVICE_NAME, INITIAL_VOLUME, fade::Fader};
 use librespot_connect::Spirc;
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
@@ -24,22 +24,23 @@ const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
 const TRACK_URL: &str = "https://open.spotify.com/track/";
 
 /// Serves MPRIS for as long as the speaker reports player events.
-pub(crate) fn publish(spirc: Arc<Spirc>, events: PlayerEventChannel) {
+pub(crate) fn publish(spirc: Arc<Spirc>, fader: Fader, events: PlayerEventChannel) {
     tokio::spawn(async move {
         // Without a session bus, such as over SSH, the player works but is not published.
-        if let Ok(connection) = serve(spirc).await {
+        if let Ok(connection) = serve(spirc, fader).await {
             follow(&connection, events).await;
         }
     });
 }
 
-async fn serve(spirc: Arc<Spirc>) -> zbus::Result<Connection> {
+async fn serve(spirc: Arc<Spirc>, fader: Fader) -> zbus::Result<Connection> {
     let connection = connection::Builder::session()?
         .serve_at(PATH, Root)?
         .serve_at(
             PATH,
             Player {
                 spirc,
+                fader,
                 now: Now::default(),
             },
         )?
@@ -376,6 +377,8 @@ impl Root {
 
 struct Player {
     spirc: Arc<Spirc>,
+    /// Pauses and resumes with a short fade, as the player's own keys do.
+    fader: Fader,
     now: Now,
 }
 
@@ -390,11 +393,17 @@ impl Player {
     }
 
     fn pause(&self) -> fdo::Result<()> {
-        failed(self.spirc.pause())
+        self.fader.pause(&self.spirc);
+        Ok(())
     }
 
     fn play_pause(&self) -> fdo::Result<()> {
-        failed(self.spirc.play_pause())
+        if self.now.status == Status::Playing {
+            self.fader.pause(&self.spirc);
+            Ok(())
+        } else {
+            failed(self.fader.resume(&self.spirc))
+        }
     }
 
     fn stop(&self) -> fdo::Result<()> {
@@ -408,7 +417,7 @@ impl Player {
     }
 
     fn play(&self) -> fdo::Result<()> {
-        failed(self.spirc.play())
+        failed(self.fader.resume(&self.spirc))
     }
 
     fn seek(&self, offset: i64) -> fdo::Result<()> {

@@ -1,4 +1,4 @@
-use super::{Catalog, Error, Repeat};
+use super::{Catalog, Error, Repeat, fade::Fader};
 use http::{HeaderMap, HeaderValue, Method, header::CONTENT_TYPE};
 use librespot_connect::{
     ConnectConfig, LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack,
@@ -35,6 +35,7 @@ pub(crate) struct Speaker {
     spirc: Arc<Spirc>,
     session: Session,
     mixer: Arc<dyn Mixer>,
+    fader: Fader,
     /// Dropped with the speaker, so that stopping it on purpose is not reported as lost.
     _watch: oneshot::Sender<()>,
 }
@@ -109,8 +110,11 @@ impl Speaker {
 
     pub(crate) fn command(&self, command: Command) -> Result<(), Error> {
         match command {
-            Command::Resume => self.spirc.play(),
-            Command::Pause => self.spirc.pause(),
+            Command::Resume => self.fader.resume(&self.spirc),
+            Command::Pause => {
+                self.fader.pause(&self.spirc);
+                return Ok(());
+            }
             Command::Next => self.spirc.next(),
             Command::Previous => self.spirc.prev(),
             Command::Seek(position) => self.spirc.set_position_ms(position),
@@ -142,10 +146,11 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
     let backend = audio_backend::find(None).ok_or(Error::NoAudio)?;
     let mixer = mixer::find(None).ok_or(Error::NoAudio)?(MixerConfig::default())?;
     let session = Session::new(SessionConfig::default(), None);
+    let fader = Fader::default();
     let player = Player::new(
         PlayerConfig::default(),
         session.clone(),
-        mixer.get_soft_volume(),
+        fader.wrap(mixer.get_soft_volume()),
         move || backend(None, AudioFormat::default()),
     );
     tokio::spawn(forward(player.get_player_event_channel(), events));
@@ -166,12 +171,13 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
     tokio::spawn(watch_session(session.clone(), task, stopped, report));
     let spirc = Arc::new(spirc);
     #[cfg(target_os = "linux")]
-    super::mpris::publish(spirc.clone(), media_events);
+    super::mpris::publish(spirc.clone(), fader.clone(), media_events);
     Ok(Connection {
         speaker: Speaker {
             spirc,
             session: session.clone(),
             mixer,
+            fader,
             _watch: watch,
         },
         catalog: Catalog::new(session),
