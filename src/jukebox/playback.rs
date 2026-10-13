@@ -18,8 +18,8 @@ const TICK: Duration = Duration::from_millis(250);
 pub(super) const SEEK_STEP: Duration = Duration::from_secs(10);
 /// One step of the volume keys: 5% of the speaker's range.
 const VOLUME_STEP: u16 = u16::MAX / 20;
-/// The bars of the volume meter, rising from left to right.
-const VOLUME_BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+/// Cells of the volume bar.
+const VOLUME_CELLS: u32 = 12;
 const PERCENT: u32 = 100;
 /// Shades of the progress bar's edge cell between gray and green.
 const PROGRESS_STEPS: usize = 8;
@@ -526,13 +526,9 @@ impl Jukebox {
         }
     }
 
-    /// The bars of the volume meter that are lit and those that are not.
-    pub(super) fn volume_meter(&self) -> (String, String) {
-        volume_meter(self.percent())
-    }
-
-    pub(super) fn volume_percent(&self) -> String {
-        format!(" {:>3}%", self.percent())
+    /// The volume as a bar like the progress bar: its loud part, then the rest.
+    pub(super) fn volume_bar(&self) -> (String, String) {
+        volume_bar(self.percent())
     }
 
     pub(super) fn shuffle_on(&self) -> bool {
@@ -603,14 +599,10 @@ fn step_toward(level: u8, target: u8) -> u8 {
     if level < target { level + 1 } else { level - 1 }
 }
 
-/// A meter of bars that rise from left to right, lit up to `percent`.
-fn volume_meter(percent: u32) -> (String, String) {
-    let lit = (percent * VOLUME_BARS.len() as u32).div_ceil(PERCENT) as usize;
-    let lit = lit.min(VOLUME_BARS.len());
-    (
-        VOLUME_BARS[..lit].iter().collect(),
-        VOLUME_BARS[lit..].iter().collect(),
-    )
+/// A bar of [`VOLUME_CELLS`] cells, green up to `percent`.
+fn volume_bar(percent: u32) -> (String, String) {
+    let loud = (percent * VOLUME_CELLS).div_ceil(PERCENT).min(VOLUME_CELLS) as usize;
+    ("━".repeat(loud), "━".repeat(VOLUME_CELLS as usize - loud))
 }
 
 /// The player alone names neither the artists nor the album.
@@ -629,7 +621,7 @@ fn label(length: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Album, NowPlaying, Repeat, Track, details, volume_meter};
+    use super::{Album, NowPlaying, Repeat, Track, details, volume_bar};
     use crate::spotify::Artist;
     use std::time::Duration;
 
@@ -657,13 +649,12 @@ mod tests {
     }
 
     #[test]
-    fn the_volume_meter_lights_its_bars_in_order() {
-        let lit = |percent| volume_meter(percent).0;
-        assert_eq!(volume_meter(0), (String::new(), "▁▂▃▄▅▆▇█".into()));
-        assert_eq!(lit(1), "▁");
-        assert_eq!(lit(50), "▁▂▃▄");
-        assert_eq!(lit(95), "▁▂▃▄▅▆▇█");
-        assert_eq!(volume_meter(100), ("▁▂▃▄▅▆▇█".into(), String::new()));
+    fn the_volume_bar_fills_up_to_the_volume() {
+        let loud = |percent| volume_bar(percent).0.chars().count();
+        assert_eq!(volume_bar(0), (String::new(), "━".repeat(12)));
+        assert_eq!(loud(1), 1);
+        assert_eq!(loud(50), 6);
+        assert_eq!(volume_bar(100), ("━".repeat(12), String::new()));
     }
 
     #[test]
