@@ -37,6 +37,34 @@ pub(crate) struct PlaylistDetails {
     pub(crate) cover: Option<String>,
 }
 
+/// What a search result opens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SearchKind {
+    Artist,
+    Album,
+    Playlist,
+    Podcast,
+}
+
+/// An artist, album, playlist or podcast found by a search.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SearchItem {
+    pub(crate) kind: SearchKind,
+    pub(crate) uri: String,
+    pub(crate) name: String,
+    /// Who made it: the album's artists, the playlist's owner, the podcast's publisher.
+    pub(crate) detail: String,
+}
+
+/// The sections of a search besides its songs.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SearchResults {
+    pub(crate) artists: Vec<Rc<SearchItem>>,
+    pub(crate) albums: Vec<Rc<SearchItem>>,
+    pub(crate) playlists: Vec<Rc<SearchItem>>,
+    pub(crate) podcasts: Vec<Rc<SearchItem>>,
+}
+
 /// A playlist or a folder of the user's library.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum LibraryItem {
