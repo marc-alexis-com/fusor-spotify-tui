@@ -21,6 +21,8 @@ pub(crate) struct Track {
     pub(crate) duration_ms: u64,
     /// When an episode came out, as `YYYY-MM-DD`; tracks have none.
     pub(crate) released: Option<String>,
+    /// Whether Spotify can play it for this account, here and now.
+    pub(crate) playable: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -201,6 +201,7 @@ impl Catalog {
                 ..BatchedEntityRequest::default()
             };
             let response = session.spclient().get_extended_metadata(request).await?;
+            let listener = Listener::of(&session);
             // A track Spotify describes incompletely is left out like an unavailable one,
             // instead of failing the whole batch and stopping the listing there.
             let mut found: HashMap<_, _> = response
@@ -210,7 +211,10 @@ impl Catalog {
                 .filter(|data| data.header.status_code == STATUS_OK)
                 .filter_map(|data| {
                     let uri = &data.entity_uri;
-                    Some((uri.clone(), describe(uri, &data.extension_data.value)?))
+                    Some((
+                        uri.clone(),
+                        describe(uri, &data.extension_data.value, &listener)?,
+                    ))
                 })
                 .collect();
             Ok(uris.iter().filter_map(|uri| found.remove(uri)).collect())
@@ -344,6 +348,7 @@ fn track(uri: &str, message: &metadata::Track) -> Result<Track, Error> {
         },
         duration_ms: u64::from(message.duration().unsigned_abs()),
         released: None,
+        playable: true,
     })
 }
 
@@ -455,13 +460,78 @@ fn plain_text(html: &str) -> String {
 }
 
 /// The track or episode that `bytes` describe, unless Spotify described it incompletely.
-fn describe(uri: &str, bytes: &[u8]) -> Option<Track> {
+fn describe(uri: &str, bytes: &[u8], listener: &Listener) -> Option<Track> {
     let found = if uri.starts_with(EPISODE_PREFIX) {
-        episode(uri, &metadata::Episode::parse_from_bytes(bytes).ok()?)
+        let message = metadata::Episode::parse_from_bytes(bytes).ok()?;
+        episode(uri, &message).map(|episode| Track {
+            playable: listener.allowed(&message.restriction),
+            ..episode
+        })
     } else {
-        track(uri, &metadata::Track::parse_from_bytes(bytes).ok()?)
+        let message = metadata::Track::parse_from_bytes(bytes).ok()?;
+        track(uri, &message).map(|track| Track {
+            playable: listener.can_play(&message),
+            ..track
+        })
     };
     found.ok()
+}
+
+/// Where and on which offer the account listens, which decides what it can play.
+pub(super) struct Listener {
+    country: String,
+    catalogue: String,
+}
+
+impl Listener {
+    pub(super) fn of(session: &Session) -> Self {
+        let user = session.user_data();
+        Self {
+            catalogue: user
+                .attributes
+                .get("catalogue")
+                .cloned()
+                .unwrap_or_else(|| "premium".into()),
+            country: user.country,
+        }
+    }
+
+    /// librespot's rule: released, allowed here, and with audio of its own or a
+    /// replacement that Spotify relinks it to.
+    fn can_play(&self, track: &metadata::Track) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+            });
+        track.earliest_live_timestamp() <= now
+            && self.allowed(&track.restriction)
+            && (!track.file.is_empty() || !track.alternative.is_empty())
+    }
+
+    /// The first restriction on the account's offer decides, by its list of
+    /// allowed or forbidden countries.
+    fn allowed(&self, restrictions: &[metadata::Restriction]) -> bool {
+        let Some(restriction) = restrictions
+            .iter()
+            .find(|restriction| restriction.catalogue_str.contains(&self.catalogue))
+        else {
+            return true;
+        };
+        let listed = |countries: &str| {
+            countries
+                .as_bytes()
+                .chunks(2)
+                .any(|code| code == self.country.as_bytes())
+        };
+        if restriction.has_countries_allowed() {
+            listed(restriction.countries_allowed())
+        } else if restriction.has_countries_forbidden() {
+            !listed(restriction.countries_forbidden())
+        } else {
+            true
+        }
+    }
 }
 
 /// An episode lists like a track whose album is its show, and has no artists.
@@ -481,6 +551,7 @@ fn episode(uri: &str, message: &metadata::Episode) -> Result<Track, Error> {
             .as_ref()
             .filter(|date| date.year() > 0)
             .map(|date| format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day())),
+        playable: true,
     })
 }
 
@@ -491,6 +562,35 @@ mod tests {
 
     fn entry(uri: &str, name: Option<&str>) -> (String, Option<String>) {
         (uri.to_owned(), name.map(str::to_owned))
+    }
+
+    #[test]
+    fn restrictions_decide_by_country_and_offer() {
+        use librespot_protocol::metadata::Restriction;
+        let listener = super::Listener {
+            country: "FR".into(),
+            catalogue: "premium".into(),
+        };
+        let restriction = |catalogue: &str, allowed: Option<&str>, forbidden: Option<&str>| {
+            let mut restriction = Restriction::new();
+            restriction.catalogue_str = vec![catalogue.into()];
+            if let Some(countries) = allowed {
+                restriction.set_countries_allowed(countries.into());
+            }
+            if let Some(countries) = forbidden {
+                restriction.set_countries_forbidden(countries.into());
+            }
+            restriction
+        };
+        assert!(listener.allowed(&[]));
+        assert!(listener.allowed(&[restriction("premium", Some("BEFRDE"), None)]));
+        assert!(!listener.allowed(&[restriction("premium", Some("BEDE"), None)]));
+        assert!(!listener.allowed(&[restriction("premium", None, Some("USFR"))]));
+        assert!(listener.allowed(&[restriction("premium", None, Some("USGB"))]));
+        // A restriction on another offer does not apply.
+        assert!(listener.allowed(&[restriction("free", Some("US"), None)]));
+        // Two-letter codes are not matched across their boundaries.
+        assert!(!listener.allowed(&[restriction("premium", Some("XFRX"), None)]));
     }
 
     #[test]

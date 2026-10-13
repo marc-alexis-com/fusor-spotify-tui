@@ -210,18 +210,11 @@ impl Jukebox {
             PlayerEvent::TrackChanged { audio_item } => {
                 let covers = audio_item.covers.iter();
                 let cover = cover::pick(covers.map(|image| (image.width, image.url.as_str())));
-                // What the player knows, for when the catalog cannot describe the track.
-                let fallback = Track {
-                    uri: audio_item.uri.clone(),
-                    name: audio_item.name,
-                    artists: Vec::new(),
-                    album: Album {
-                        uri: String::new(),
-                        name: String::new(),
-                    },
-                    duration_ms: u64::from(audio_item.duration_ms),
-                    released: None,
-                };
+                let fallback = fallback(
+                    audio_item.uri.clone(),
+                    audio_item.name,
+                    audio_item.duration_ms,
+                );
                 self.change_track(audio_item.uri, cover, fallback);
             }
             PlayerEvent::Playing {
@@ -589,6 +582,22 @@ impl Progress {
     }
 }
 
+/// What the player knows of a track, for when the catalog cannot describe it.
+fn fallback(uri: String, name: String, duration_ms: u32) -> Track {
+    Track {
+        uri,
+        name,
+        artists: Vec::new(),
+        album: Album {
+            uri: String::new(),
+            name: String::new(),
+        },
+        duration_ms: u64::from(duration_ms),
+        released: None,
+        playable: true,
+    }
+}
+
 /// One fade level closer to `target`.
 fn step_toward(level: u8, target: u8) -> u8 {
     if level < target { level + 1 } else { level - 1 }
@@ -702,6 +711,7 @@ mod tests {
             },
             duration_ms: 1_000,
             released: None,
+            playable: true,
         };
         let mut now = NowPlaying::default();
         assert!(!now.start("spotify:track:one"));
@@ -724,6 +734,7 @@ mod tests {
             },
             duration_ms: 1_000,
             released: None,
+            playable: true,
         };
         assert_eq!(details(&track), "");
         track.artists.push(Artist {
