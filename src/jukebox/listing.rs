@@ -194,6 +194,11 @@ impl Listing {
         self.tracks.len() + (self.uris.len() - self.loaded)
     }
 
+    /// Whether every entry is a podcast episode, whose columns are named after them.
+    pub(crate) fn episodes_only(&self) -> bool {
+        !self.uris.is_empty() && self.uris.iter().all(|uri| uri.starts_with(EPISODE_PREFIX))
+    }
+
     /// Whether some entries are podcast episodes, which Spotify does not play from
     /// the context of a playlist.
     pub(crate) fn has_episodes(&self) -> bool {
@@ -211,7 +216,7 @@ impl Listing {
             Loading::Failed(error) => error.clone(),
             _ => {
                 let count = self.count();
-                let noun = if self.uris.iter().all(|uri| uri.starts_with(EPISODE_PREFIX)) {
+                let noun = if self.episodes_only() {
                     "episode"
                 } else {
                     "song"
@@ -237,8 +242,15 @@ impl Listing {
                         (index + 1).to_string()
                     },
                     title: track.name.clone(),
-                    artist: track.artist_names(),
-                    album: track.album.name.clone(),
+                    // An episode has no artists: its show and release date take their place.
+                    artist: match &track.released {
+                        Some(_) => track.album.name.clone(),
+                        None => track.artist_names(),
+                    },
+                    album: track
+                        .released
+                        .clone()
+                        .unwrap_or_else(|| track.album.name.clone()),
                     length: duration(track.duration_ms),
                     selected: window.selected == index,
                     playing,
@@ -275,6 +287,7 @@ mod tests {
                 name: "Album".into(),
             },
             duration_ms: 0,
+            released: None,
         })
     }
 
@@ -310,6 +323,25 @@ mod tests {
         assert_eq!((listing.count(), listing.summary()), (2, "2 songs".into()));
         assert_eq!(listing.next_chunk(1, 2), None);
         assert!(!listing.is_empty());
+    }
+
+    #[test]
+    fn episodes_show_their_show_and_release_date() {
+        let mut listing = Listing::new(Source::Liked);
+        let mut episode = (*track("spotify:episode:e")).clone();
+        episode.album.name = "The Show".into();
+        episode.released = Some("2026-07-19".into());
+        listing.uris = ["spotify:episode:e".to_owned()].into();
+        listing.tracks = vec![Rc::new(episode), track("spotify:track:t")];
+        let mut window = Window::default();
+        window.resize(2);
+        let rows = listing.rows(window, None);
+        assert_eq!(
+            (rows[0].artist.as_str(), rows[0].album.as_str()),
+            ("The Show", "2026-07-19")
+        );
+        assert_eq!(rows[1].album, "Album");
+        assert!(listing.episodes_only());
     }
 
     #[test]

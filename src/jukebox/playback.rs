@@ -206,6 +206,7 @@ impl Jukebox {
                         name: String::new(),
                     },
                     duration_ms: u64::from(audio_item.duration_ms),
+                    released: None,
                 };
                 self.change_track(audio_item.uri, cover, fallback);
             }
@@ -641,6 +642,7 @@ mod tests {
                 name: "One".into(),
             },
             duration_ms: 1_000,
+            released: None,
         };
         let mut now = NowPlaying::default();
         assert!(!now.start("spotify:track:one"));
@@ -662,6 +664,7 @@ mod tests {
                 name: String::new(),
             },
             duration_ms: 1_000,
+            released: None,
         };
         assert_eq!(details(&track), "");
         track.artists.push(Artist {
