@@ -73,6 +73,8 @@ pub(crate) struct Jukebox {
     search: Signal<String>,
     /// The artists, albums, playlists and podcasts of the last search.
     found: Signal<Option<Found>>,
+    /// The search box whose result has the focus, which outlines it.
+    focused_box: Signal<Option<&'static str>>,
     now: Signal<NowPlaying>,
     clock: Signal<usize>,
     /// Frames of the progress bar, which counts faster than the clock while music plays.
@@ -128,6 +130,7 @@ impl FromInputs for Jukebox {
             to_end: Cell::new(false),
             search: signal(String::new()),
             found: signal(None),
+            focused_box: signal(None),
             now: signal(NowPlaying::default()),
             clock: signal(0),
             frame: signal(0),
