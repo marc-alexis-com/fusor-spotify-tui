@@ -1,5 +1,6 @@
-//! The glyphs of the interface: Nerd Font icons when `SPT_NERD_FONT` is set, plain
-//! Unicode otherwise, since a Nerd Font cannot be detected from the terminal.
+//! The glyphs of the interface: Nerd Font icons when `interface.nerd_font` or else
+//! `SPT_NERD_FONT` asks for them, plain Unicode otherwise, since a Nerd Font cannot
+//! be detected from the terminal.
 use std::sync::OnceLock;
 
 pub(crate) struct Icons {
@@ -58,8 +59,9 @@ pub(crate) const PLAIN: Icons = Icons {
 pub(crate) fn get() -> &'static Icons {
     static ICONS: OnceLock<&'static Icons> = OnceLock::new();
     ICONS.get_or_init(|| {
-        let nerd =
-            std::env::var("SPT_NERD_FONT").is_ok_and(|value| !value.is_empty() && value != "0");
+        let nerd = crate::config::get().interface.nerd_font.unwrap_or_else(|| {
+            std::env::var("SPT_NERD_FONT").is_ok_and(|value| !value.is_empty() && value != "0")
+        });
         if nerd { &NERD } else { &PLAIN }
     })
 }

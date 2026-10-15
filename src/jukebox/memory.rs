@@ -1,11 +1,34 @@
-//! The view the player showed last, which it opens again at the next start. It
-//! lives in `$XDG_STATE_HOME/spt/view.json`: losing it only means opening Liked Songs.
+//! The view the player showed last and its selected row, which it opens again at
+//! the next start. It lives in `$XDG_STATE_HOME/spt/view.json`: losing it only
+//! means opening Liked Songs.
 use super::listing::Source;
 use crate::spotify::{Album, Artist, Playlist};
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf, rc::Rc};
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+/// A view and the row selected in it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(super) struct Saved {
+    #[serde(flatten)]
+    view: View,
+    #[serde(default)]
+    pub(super) row: usize,
+}
+
+impl Saved {
+    pub(super) fn new(source: &Source, row: usize) -> Self {
+        Self {
+            view: View::from(source),
+            row,
+        }
+    }
+
+    pub(super) fn source(&self) -> Source {
+        Source::from(self.view.clone())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum View {
     Liked,
@@ -65,25 +88,25 @@ fn path() -> Option<PathBuf> {
 }
 
 /// The view saved last, if any could be read.
-pub(super) fn recall() -> Option<Source> {
+pub(super) fn recall() -> Option<Saved> {
     let text = std::fs::read_to_string(path()?).ok()?;
-    serde_json::from_str::<View>(&text).ok().map(Source::from)
+    serde_json::from_str(&text).ok()
 }
 
 /// Saves the view, whole or not at all: it goes to a file beside, then takes its name.
-pub(super) fn remember(source: &Source) -> io::Result<()> {
+pub(super) fn remember(saved: &Saved) -> io::Result<()> {
     let path = path().ok_or_else(|| io::Error::other("no home folder to save the view in"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let partial = path.with_extension("json.partial");
-    std::fs::write(&partial, serde_json::to_vec(&View::from(source))?)?;
+    std::fs::write(&partial, serde_json::to_vec(saved)?)?;
     std::fs::rename(partial, path)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Source, View};
+    use super::{Saved, Source};
     use crate::spotify::Playlist;
     use std::rc::Rc;
 
@@ -98,9 +121,15 @@ mod tests {
             })),
         ];
         for source in sources {
-            let text = serde_json::to_string(&View::from(&source)).unwrap();
-            let view: View = serde_json::from_str(&text).unwrap();
-            assert_eq!(Source::from(view), source);
+            let text = serde_json::to_string(&Saved::new(&source, 12)).unwrap();
+            let saved: Saved = serde_json::from_str(&text).unwrap();
+            assert_eq!((saved.source(), saved.row), (source, 12));
         }
+    }
+
+    #[test]
+    fn a_view_saved_without_its_row_still_reads() {
+        let saved: Saved = serde_json::from_str(r#"{"kind":"liked"}"#).unwrap();
+        assert_eq!((saved.source(), saved.row), (Source::Liked, 0));
     }
 }

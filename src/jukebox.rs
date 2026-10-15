@@ -11,7 +11,7 @@ mod results;
 mod session;
 mod view;
 
-use crate::config::PlayerPosition;
+use crate::config::{self, PlayerPosition};
 use crate::spotify::{self, Catalog, LibraryEntry, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
 use header::Header;
@@ -26,13 +26,9 @@ use std::{
     rc::Rc,
 };
 
-/// How long a notice stays on screen, in clock ticks.
-const NOTICE_TICKS: usize = 16;
-
 pub(crate) struct Startup {
     pub(crate) http: reqwest::Client,
     pub(crate) refresh_token: Option<String>,
-    pub(crate) player: PlayerPosition,
 }
 
 #[derive(Clone, PartialEq)]
@@ -114,8 +110,12 @@ pub(crate) struct Jukebox {
     shelves_focused: Signal<bool>,
     notice: Signal<Option<Notice>>,
     root: RefCell<Option<Node>>,
-    /// Whether the player bar sits above the library or below it.
-    player: PlayerPosition,
+    /// The row to select once the list opened at start is known.
+    pending_row: Cell<Option<usize>>,
+    /// The view and row saved last, written again only once they change.
+    remembered: RefCell<Option<memory::Saved>>,
+    /// Whether the sidebar shows; a key shows or hides it.
+    sidebar: Signal<bool>,
     saved_login: RefCell<Option<String>>,
 }
 
@@ -167,7 +167,9 @@ impl FromInputs for Jukebox {
             shelves_focused: signal(false),
             notice: signal(None),
             root: RefCell::new(None),
-            player: startup.player,
+            pending_row: Cell::new(None),
+            remembered: RefCell::new(None),
+            sidebar: signal(config::get().layout.sidebar),
             saved_login: RefCell::new(startup.refresh_token),
         })
     }
@@ -205,7 +207,7 @@ impl Jukebox {
         self.notice.with(|notice| {
             notice
                 .as_ref()
-                .filter(|notice| now.saturating_sub(notice.shown) < NOTICE_TICKS)
+                .filter(|notice| now.saturating_sub(notice.shown) < config::get().notice_ticks())
                 .map_or_else(String::new, |notice| notice.text.clone())
         })
     }
@@ -219,7 +221,22 @@ impl Jukebox {
     }
 
     fn player_on_top(&self) -> bool {
-        self.player == PlayerPosition::Top
+        config::get().layout.player == PlayerPosition::Top
+    }
+
+    fn column_shown(&self, column: config::Column) -> bool {
+        config::get().layout.columns.contains(&column)
+    }
+
+    fn sidebar_shown(&self) -> bool {
+        self.sidebar.get()
+    }
+
+    fn help_hint(&self) -> String {
+        format!(
+            "Music plays on this computer. Other Spotify apps list it as “{}”.",
+            config::get().playback.device_name
+        )
     }
 
     fn focus(&self, id: &str) {

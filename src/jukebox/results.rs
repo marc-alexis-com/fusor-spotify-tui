@@ -1,6 +1,9 @@
 //! The artists, albums, playlists and podcasts a search finds, below its songs.
 use super::{Jukebox, listing::Source};
-use crate::spotify::{Album, Artist, Playlist, SearchItem, SearchKind, SearchResults};
+use crate::{
+    config::{self, SearchBox},
+    spotify::{Album, Artist, Playlist, SearchItem, SearchKind, SearchResults},
+};
 use hypercmd::{Event, EventPayload, Input, Key, Node};
 use std::rc::Rc;
 
@@ -41,20 +44,31 @@ impl Found {
     }
 }
 
-/// The boxes of a catalog search, in the order they show.
-pub(crate) const CATALOG_BOXES: [&str; 4] = ["Artists", "Albums", "Playlists", "Podcasts"];
+/// The titles of the boxes of a search, in the order the settings show them.
+pub(crate) fn search_titles() -> Vec<&'static str> {
+    config::get()
+        .search
+        .boxes
+        .iter()
+        .map(|shown| shown.title())
+        .collect()
+}
 
-/// The boxes of a catalog search's results.
+/// The boxes of a catalog search's results, those the settings show.
 pub(crate) fn catalog_boxes(results: &SearchResults) -> Boxes {
-    CATALOG_BOXES
-        .into_iter()
-        .zip([
-            &results.artists,
-            &results.albums,
-            &results.playlists,
-            &results.podcasts,
-        ])
-        .map(|(title, items)| (title, items.clone()))
+    config::get()
+        .search
+        .boxes
+        .iter()
+        .map(|shown| {
+            let items = match shown {
+                SearchBox::Artists => &results.artists,
+                SearchBox::Albums => &results.albums,
+                SearchBox::Playlists => &results.playlists,
+                SearchBox::Podcasts => &results.podcasts,
+            };
+            (shown.title(), items.clone())
+        })
         .collect()
 }
 
@@ -170,13 +184,13 @@ impl Jukebox {
     }
 
     pub(super) fn results_shown(&self) -> bool {
-        self.current_found().is_some()
+        !self.result_sections().is_empty()
     }
 
     pub(super) fn result_sections(&self) -> Vec<Rc<ResultSection>> {
         self.current_found()
             .map(|found| {
-                sections(&found, &CATALOG_BOXES)
+                sections(&found, &search_titles())
                     .into_iter()
                     .map(Rc::new)
                     .collect()
@@ -286,7 +300,7 @@ fn beside(
 
 #[cfg(test)]
 mod tests {
-    use super::{CATALOG_BOXES, Found, catalog_boxes, sections, source};
+    use super::{Found, catalog_boxes, search_titles, sections, source};
     use crate::{
         jukebox::listing::Source,
         spotify::{SearchItem, SearchKind, SearchResults},
@@ -311,14 +325,14 @@ mod tests {
         };
         let shown = sections(
             &Found::Ready("daft".into(), Rc::new(catalog_boxes(&results))),
-            &CATALOG_BOXES,
+            &search_titles(),
         );
         let titles: Vec<_> = shown.iter().map(|section| section.title).collect();
         assert_eq!(titles, ["Artists", "Albums", "Playlists", "Podcasts"]);
         assert_eq!(shown[0].rows[0].label, "Daft Punk");
         assert_eq!(shown[1].rows[0].label, "Discovery · Daft Punk");
         assert_eq!(shown[2].note, "No playlists");
-        let loading = sections(&Found::Loading("daft".into()), &CATALOG_BOXES);
+        let loading = sections(&Found::Loading("daft".into()), &search_titles());
         assert!(loading.iter().all(|section| section.note == "Searching…"));
         assert_ne!(loading[0].key, shown[0].key);
     }

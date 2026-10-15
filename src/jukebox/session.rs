@@ -1,5 +1,8 @@
 use super::{Jukebox, Screen};
-use crate::spotify::{self, Authorization, INITIAL_VOLUME, Speaker, Token};
+use crate::{
+    config,
+    spotify::{self, Authorization, Speaker, Token},
+};
 use hypercmd::{Error, Event};
 use std::{
     process::{Command, Stdio},
@@ -7,13 +10,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-
-#[cfg(target_os = "macos")]
-const BROWSER_OPENER: &str = "open";
-#[cfg(not(target_os = "macos"))]
-const BROWSER_OPENER: &str = "xdg-open";
-/// How long to wait before trying again to reach Spotify after a lost session.
-const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 impl Jukebox {
     /// Captures the root on first presentation and resumes a saved login.
@@ -59,7 +55,7 @@ impl Jukebox {
         self.saved_login.take();
         let authorization = Authorization::new();
         // The page link stays on screen, so a browser that fails to open is not fatal.
-        let _ = Command::new(BROWSER_OPENER)
+        let _ = Command::new(&config::get().system.browser)
             .arg(&authorization.url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -90,7 +86,8 @@ impl Jukebox {
     async fn connect(self: Rc<Self>, token: Token) -> Result<(), spotify::Error> {
         self.screen.set(Screen::Connecting);
         let (events, player_events) = mpsc::unbounded_channel();
-        let connection = Speaker::connect(token.access, events.clone(), INITIAL_VOLUME).await?;
+        let connection =
+            Speaker::connect(token.access, events.clone(), config::get().initial_volume()).await?;
         let lost = self.install(connection);
         self.screen.set(Screen::Library);
         for started in [self.follow_player(player_events), self.start_clock()] {
@@ -103,7 +100,7 @@ impl Jukebox {
             self.warn(format!("Cannot watch the connection to Spotify: {error}"));
         }
         self.load_playlists();
-        self.open_last_view();
+        self.open_first_view();
         self.focus("tracks");
         Ok(())
     }
@@ -120,9 +117,9 @@ impl Jukebox {
         // A speaker dropped on purpose ends the watch without a loss.
         while lost.await.is_ok() {
             // Stopping the dead speaker releases its audio output and MPRIS name.
-            // The new one starts at full volume too: the system mixer sets the loudness.
+            // The new one starts at the initial volume too.
             drop(self.speaker.replace(None));
-            let volume = INITIAL_VOLUME;
+            let volume = config::get().initial_volume();
             self.inform("Lost the connection to Spotify; reconnecting…");
             let Some(next) = self.reconnect_until_done(&events, volume).await else {
                 return;
@@ -147,7 +144,8 @@ impl Jukebox {
                 }
                 Err(error) => self.warn(format!("Cannot reconnect to Spotify yet: {error}")),
             }
-            self.services.sleep(RECONNECT_DELAY).ok()?.await.ok()?;
+            let delay = Duration::from_secs(config::get().system.reconnect_seconds);
+            self.services.sleep(delay).ok()?.await.ok()?;
         }
     }
 

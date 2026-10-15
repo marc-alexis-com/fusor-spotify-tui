@@ -1,9 +1,9 @@
-//! The colors and corners of the interface, applied over `ui/terminal.css` when
+//! The colors, corners and sizes of the settings, applied over `ui/terminal.css` when
 //! the player starts, so that the settings change them without a new build.
 //! `ui/terminal.css` holds no color but the covers', which are image IDs.
 use crate::config::{Borders, Config, Paint, Theme};
 use hypercmd::style::{
-    BorderStyle, Color, Declaration, Rule, Selector,
+    BorderStyle, Color, Declaration, Length, Rule, Selector,
     Selector::{Class, Focus, Id, Tag},
     StyleSheet,
 };
@@ -162,6 +162,20 @@ pub(crate) fn stylesheet(config: &Config) -> StyleSheet {
     rules.extend(paused.chain(edges).map(|(class, declaration)| Rule {
         selector: leak(vec![Class(class)]),
         declarations: leak(vec![declaration]),
+    }));
+    let sizes = [
+        (
+            "shelves",
+            Declaration::Width(Length::Cells(f32::from(config.layout.sidebar_width))),
+        ),
+        (
+            "results",
+            Declaration::Height(Length::Cells(f32::from(config.layout.results_height))),
+        ),
+    ];
+    rules.extend(sizes.map(|(class, size)| Rule {
+        selector: leak(vec![Class(class)]),
+        declarations: leak(vec![size]),
     }));
     if config.layout.borders == Borders::Square {
         rules.extend(BORDERED.iter().map(|&selector| Rule {

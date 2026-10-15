@@ -1,7 +1,7 @@
 //! Publishes the speaker on the session bus as an MPRIS player, so `playerctl`,
 //! media keys and status bars can control it.
 
-use super::{DEVICE_NAME, INITIAL_VOLUME, fade::Fader};
+use super::fade::Fader;
 use librespot_connect::Spirc;
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
@@ -247,7 +247,7 @@ impl Default for Now {
             position: Duration::ZERO,
             reported: Instant::now(),
             // librespot sets the mixer to this at startup without reporting it.
-            volume: INITIAL_VOLUME,
+            volume: crate::config::get().initial_volume(),
             shuffle: false,
             repeat: Loop::Off,
         }
@@ -361,7 +361,7 @@ impl Root {
 
     #[zbus(property)]
     fn identity(&self) -> String {
-        DEVICE_NAME.into()
+        crate::config::get().playback.device_name.clone()
     }
 
     #[zbus(property)]

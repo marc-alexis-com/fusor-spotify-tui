@@ -1,5 +1,6 @@
 <template rust:component="Shelves">
   <section id="shelves" class="shelves" class:active="{{ state.jukebox.shelves_focused.get() }}"
+           class:hidden="{{ !state.jukebox.sidebar_shown() }}"
            on:keydown="state.jukebox.leave_shelves(&event)">
     <p class="pane-title">YOUR LIBRARY</p>
     <button class="shelf" on:focus="state.jukebox.shelves_focused.set(true)" on:blur="state.jukebox.shelves_focused.set(false)" class:current="{{ state.jukebox.searching_catalog() }}"

@@ -1,11 +1,9 @@
 use super::{Jukebox, listing::duration};
 use crate::{
+    config,
     cover::{self, Slot},
     icons,
-    spotify::{
-        Album, Command, DEVICE_NAME, Error as SpotifyError, INITIAL_VOLUME, Mode, Repeat, Speaker,
-        Track,
-    },
+    spotify::{Album, Command, Error as SpotifyError, Mode, Repeat, Speaker, Track},
 };
 use hypercmd::{Error, Event, EventPayload};
 use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
@@ -15,11 +13,7 @@ use std::{
 };
 
 const TICK: Duration = Duration::from_millis(250);
-pub(super) const SEEK_STEP: Duration = Duration::from_secs(10);
-/// One step of the volume keys: 5% of the speaker's range.
-const VOLUME_STEP: u16 = u16::MAX / 20;
-/// How long the volume bar shows after the volume changes, in clock ticks: 2 seconds.
-const VOLUME_SHOWN_TICKS: usize = 8;
+const EPISODE_PREFIX: &str = "spotify:episode:";
 /// Cells of the volume bar.
 const VOLUME_CELLS: u32 = 8;
 const PERCENT: u32 = 100;
@@ -29,8 +23,6 @@ const PROGRESS_STEPS: usize = 8;
 /// one eighth every two frames, and back when it plays.
 pub(super) const FADE_LEVELS: u8 = 8;
 const FRAMES_PER_FADE_LEVEL: usize = 2;
-/// The progress bar moves at 60 frames per second while music plays.
-const FRAME: Duration = Duration::from_millis(16);
 
 /// What the speaker reports it is playing.
 #[derive(Clone, PartialEq)]
@@ -69,7 +61,7 @@ impl Default for NowPlaying {
             stopped: false,
             position: Duration::ZERO,
             reported: Instant::now(),
-            volume: INITIAL_VOLUME,
+            volume: crate::config::get().initial_volume(),
             shuffle: false,
             repeat: Repeat::Off,
         }
@@ -111,6 +103,13 @@ impl NowPlaying {
         self.requested = None;
         self.track = None;
         false
+    }
+
+    /// Whether a podcast episode plays, whose arrows skip further.
+    fn is_episode(&self) -> bool {
+        self.uri
+            .as_deref()
+            .is_some_and(|uri| uri.starts_with(EPISODE_PREFIX))
     }
 
     /// The playing track as lists name it.
@@ -162,17 +161,24 @@ impl Jukebox {
                 return;
             }
             self.clock.update(|clock| *clock += 1);
+            self.remember_view();
         }
     }
 
     /// Counts frames while music plays; paused, it checks four times a second.
     async fn run_frames(self: Rc<Self>) {
+        let settings = config::get();
+        let frame = settings.frame();
         let mut frames: usize = 0;
         loop {
             let playing = self.now.with_untracked(|now| now.playing);
             let target = if playing { 0 } else { FADE_LEVELS };
             let fading = self.border_fade.get_untracked() != target;
-            let pause = if playing || fading { FRAME } else { TICK };
+            if fading && !settings.interface.pause_fade {
+                self.border_fade.set(target);
+                continue;
+            }
+            let pause = if playing || fading { frame } else { TICK };
             let Ok(sleep) = self.services.sleep(pause) else {
                 return;
             };
@@ -205,7 +211,7 @@ impl Jukebox {
     }
 
     fn show_volume(&self) {
-        let until = self.clock.get_untracked() + VOLUME_SHOWN_TICKS;
+        let until = self.clock.get_untracked() + config::get().volume_ticks();
         self.volume_until.set(until);
     }
 
@@ -384,7 +390,7 @@ impl Jukebox {
     pub(super) fn seek_forward(&self) {
         // librespot ignores a seek past the end, so the last seconds would not skip.
         let target = self.now.with_untracked(|now| {
-            let target = now.elapsed() + SEEK_STEP;
+            let target = now.elapsed() + config::get().seek_step(now.is_episode());
             match &now.track {
                 Some(track) => target.min(Duration::from_millis(track.duration_ms)),
                 None => target,
@@ -394,9 +400,10 @@ impl Jukebox {
     }
 
     pub(super) fn seek_back(&self) {
-        let target = self
-            .now
-            .with_untracked(|now| now.elapsed().saturating_sub(SEEK_STEP));
+        let target = self.now.with_untracked(|now| {
+            let step = config::get().seek_step(now.is_episode());
+            now.elapsed().saturating_sub(step)
+        });
         self.seek(target);
     }
 
@@ -408,8 +415,8 @@ impl Jukebox {
 
     pub(super) fn change_volume(&self, step: VolumeStep) {
         let volume = self.now.with_untracked(|now| match step {
-            VolumeStep::Up => now.volume.saturating_add(VOLUME_STEP),
-            VolumeStep::Down => now.volume.saturating_sub(VOLUME_STEP),
+            VolumeStep::Up => now.volume.saturating_add(config::get().volume_step()),
+            VolumeStep::Down => now.volume.saturating_sub(config::get().volume_step()),
         });
         self.command(Command::Volume(volume));
         self.show_volume();
@@ -467,7 +474,10 @@ impl Jukebox {
     pub(super) fn track_details(&self) -> String {
         self.now.with(|now| match &now.track {
             Some(track) => details(track),
-            None => format!("Choose a track and press Enter · plays here as “{DEVICE_NAME}”"),
+            None => format!(
+                "Choose a track and press Enter · plays here as “{}”",
+                crate::config::get().playback.device_name
+            ),
         })
     }
 
@@ -505,14 +515,14 @@ impl Jukebox {
     }
 
     pub(super) fn progress_played(&self) -> String {
-        "━".repeat(self.progress().played)
+        glyph().repeat(self.progress().played)
     }
 
-    pub(super) fn progress_edge(&self) -> &'static str {
+    pub(super) fn progress_edge(&self) -> String {
         if self.progress().edge.is_some() {
-            "━"
+            glyph()
         } else {
-            ""
+            String::new()
         }
     }
 
@@ -522,7 +532,7 @@ impl Jukebox {
     }
 
     pub(super) fn progress_left(&self) -> String {
-        "━".repeat(self.progress().left)
+        glyph().repeat(self.progress().left)
     }
 
     pub(super) fn measure_bar(&self, event: &Event) {
@@ -624,7 +634,15 @@ fn step_toward(level: u8, target: u8) -> u8 {
 /// A bar of [`VOLUME_CELLS`] cells, green up to `percent`.
 fn volume_bar(percent: u32) -> (String, String) {
     let loud = (percent * VOLUME_CELLS).div_ceil(PERCENT).min(VOLUME_CELLS) as usize;
-    ("━".repeat(loud), "━".repeat(VOLUME_CELLS as usize - loud))
+    (
+        glyph().repeat(loud),
+        glyph().repeat(VOLUME_CELLS as usize - loud),
+    )
+}
+
+/// The character the bars are drawn with.
+fn glyph() -> String {
+    config::get().interface.bar_glyph.to_string()
 }
 
 /// The player alone names neither the artists nor the album.
@@ -767,6 +785,22 @@ mod tests {
         assert_eq!(now.listed_uri().as_deref(), Some("spotify:track:listed"));
         now.start("spotify:track:next");
         assert_eq!(now.listed_uri().as_deref(), Some("spotify:track:next"));
+    }
+
+    #[test]
+    fn episodes_skip_further_than_tracks() {
+        let settings = crate::config::get();
+        let mut now = NowPlaying::default();
+        now.start("spotify:track:one");
+        assert_eq!(
+            settings.seek_step(now.is_episode()),
+            Duration::from_secs(10)
+        );
+        now.start("spotify:episode:one");
+        assert_eq!(
+            settings.seek_step(now.is_episode()),
+            Duration::from_secs(30)
+        );
     }
 
     #[test]

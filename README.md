@@ -150,7 +150,7 @@ buttons, or scroll the track list with the mouse wheel.
 | --- | --- |
 | `Space` | Play or pause |
 | `n` / `p` | Next / previous track |
-| `←` / `→` | Seek 10 seconds |
+| `←` / `→` | Seek 10 seconds, 30 in a podcast episode |
 | `+` / `-` | Volume |
 | `s` / `r` | Shuffle / cycle repeat |
 | `↑` / `↓` / `PgUp` / `PgDn` | Choose a row |
@@ -160,29 +160,35 @@ buttons, or scroll the track list with the mouse wheel.
 | `Esc` / `Backspace` | Go back |
 | `/` / `Ctrl+F` | Search |
 | `Tab` / `Shift+Tab` | Move between controls and panes |
+| `f` | Search your library |
+| `b` | Show or hide the sidebar |
 | `?` | Show controls |
 | `q` / `Ctrl+C` | Quit |
 
-Single-key shortcuts apply outside text inputs.
+Single-key shortcuts apply outside text inputs; the `[keys]` settings change them.
 
 </details>
 
 ### Settings
 
-`spt` reopens the view it showed when it closed: a playlist, an album, an
-artist, a search. It keeps it in `$XDG_STATE_HOME/spt/view.json`
-(`~/.local/state/spt/view.json`); without it, `spt` opens Liked Songs.
+`spt` reopens the view it showed when it closed (a playlist, an album, an
+artist, a search) on the row that was selected. It keeps them in
+`$XDG_STATE_HOME/spt/view.json` (`~/.local/state/spt/view.json`).
 
-Colors, corners and the place of the player bar come from
-`$XDG_CONFIG_HOME/spt/config.toml` (`~/.config/spt/config.toml`). The file and
-each setting are optional; what is left out keeps Spotify's look:
+Everything else comes from `$XDG_CONFIG_HOME/spt/config.toml`
+(`~/.config/spt/config.toml`), or the file `--config` names. The file and each
+setting are optional; here is every setting with its default:
 
 ```toml
 [layout]
-player = "bottom"   # or "top": the player bar above the library
-borders = "rounded" # or "square"
+player = "bottom"       # or "top": the player bar above the library
+borders = "rounded"     # or "square"
+sidebar = true          # shown at start; b shows or hides it
+sidebar_width = 28
+results_height = 10     # the boxes below a search or an artist's songs
+columns = ["number", "title", "artist", "album", "length"]
 
-[theme]             # #rrggbb, or "default" for the terminal's own color
+[theme]                 # #rrggbb, or "default" for the terminal's own color
 background = "#121212"
 text = "#FFFFFF"        # titles, the focused row
 subtext = "#B3B3B3"     # artists, albums, lengths, the sidebar
@@ -192,9 +198,73 @@ surface = "#2A2A2A"     # the selected row, borders without the focus
 bar = "#3E3E3E"         # the rest of the progress bar, the search field
 accent = "#1DB954"      # what plays, what has the focus, what is on
 error = "#F15E6C"
+
+[interface]
+start = "last"          # or "liked", "recent"
+remember_row = true
+covers = true           # in terminals that show images
+# nerd_font = true      # unset: the SPT_NERD_FONT variable decides
+notice_seconds = 4
+volume_seconds = 2      # how long the volume bar shows after a change
+fps = 60                # of the progress bar while music plays
+pause_fade = true       # the player's border fades to gray on pause
+bar_glyph = "━"
+
+[playback]
+bitrate = 320           # 96, 160 or 320 kbit/s
+normalisation = true    # even loudness between tracks
+normalisation_type = "auto" # or "album", "track"
+normalisation_pregain = 0.0 # dB
+gapless = true
+autoplay = "account"    # or "on", "off": similar tracks after a list ends
+initial_volume = 100    # percent; the system mixer sets the loudness
+volume_step = 5         # percent
+seek_seconds = 10
+podcast_seek_seconds = 30
+fade_ms = 150           # around pause and resume; 0 cuts at once
+output = ""             # an output from `spt devices`; empty for the system's
+device_name = "Spotify" # what other Spotify apps list this computer as
+device_type = "computer"
+
+[cache]                 # tracks played before, in ~/.cache/spt/audio
+enabled = true
+size_mb = 1024
+
+[search]
+library_delay_ms = 80   # pause in typing before the search follows it
+catalog_delay_ms = 300
+results = 8             # in each box
+boxes = ["artists", "albums", "playlists", "podcasts"]
+
+[keys]                  # one character, or space, enter, escape, left, right…
+play_pause = ["space"]
+next = ["n"]
+previous = ["p"]
+seek_forward = ["right"]
+seek_back = ["left"]
+volume_up = ["+", "="]
+volume_down = ["-"]
+shuffle = ["s"]
+repeat = ["r"]
+open_album = ["o"]
+open_artist = ["a"]
+queue = ["z"]
+search = ["/"]
+library_search = ["f"]
+toggle_sidebar = ["b"]
+help = ["?"]
+quit = ["q"]
+back = ["escape", "backspace"]
+gg_delay_ms = 800       # j, k, h, l, g, G, Enter, Tab and the arrows up and down stay
+
+[system]
+mpris = true            # media keys and playerctl, on Linux
+reconnect_seconds = 5
+browser = "xdg-open"    # opens the login page; "open" on macOS
 ```
 
-`spt` reads the file when it starts, and refuses to start on a mistake in it.
+`spt` reads the file when it starts, and refuses to start on a mistake in it;
+`spt check-config` checks it without starting.
 
 ## How it works
 

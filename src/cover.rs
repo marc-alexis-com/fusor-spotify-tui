@@ -93,7 +93,7 @@ pub(crate) fn supported() -> bool {
         || std::env::var("TERM").is_ok_and(|term| term == "xterm-kitty");
     let colored = std::env::var_os("NO_COLOR").is_none()
         && (true_color() || std::env::var("TERM").is_ok_and(|term| term.contains("256color")));
-    kitty && colored
+    kitty && colored && crate::config::get().interface.covers
 }
 
 /// The text of one row of a cover.

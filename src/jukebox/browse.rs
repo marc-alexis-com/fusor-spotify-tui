@@ -8,7 +8,10 @@ use super::{
     artist::{ArtistCache, artist_tracks},
     library_search::{LikedCache, liked_tracks, matching_tracks},
 };
-use crate::spotify::{self, Catalog, Play, search_uri};
+use crate::{
+    config::{self, Start},
+    spotify::{self, Catalog, Play, search_uri},
+};
 use hypercmd::{Error, Event, EventPayload, Input, Key};
 use std::rc::Rc;
 
@@ -18,9 +21,6 @@ const CHUNK: usize = 100;
 const PREFETCH_ROWS: usize = 30;
 const HEADER_ROWS: usize = 1;
 const SHOW_PREFIX: &str = "spotify:show:";
-/// How long typing pauses before the search follows it.
-const LIBRARY_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(80);
-const CATALOG_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(300);
 
 impl Jukebox {
     /// Opens a library section, forgetting where the user drilled down from.
@@ -52,7 +52,6 @@ impl Jukebox {
             listing.rewind();
         }
         let resume = interrupted || listing.can_load_more();
-        self.remember(&listing.source);
         self.listing.set(listing);
         // The saved height may be stale; the list keeps its size, so no resize follows.
         // A taller window may now reach past the loaded rows.
@@ -63,17 +62,51 @@ impl Jukebox {
         true
     }
 
-    /// Opens the view shown when the player last closed, or Liked Songs.
-    pub(super) fn open_last_view(self: &Rc<Self>) {
-        let source = memory::recall().unwrap_or(Source::Liked);
+    /// Opens the view of the settings: the one shown when the player last closed,
+    /// with its row, or Liked Songs or Recently played.
+    pub(super) fn open_first_view(self: &Rc<Self>) {
+        let settings = &config::get().interface;
+        let (source, row) = match settings.start {
+            Start::Liked => (Source::Liked, 0),
+            Start::Recent => (Source::Recent, 0),
+            Start::Last => {
+                memory::recall().map_or((Source::Liked, 0), |saved| (saved.source(), saved.row))
+            }
+        };
         if let Source::Search(text) | Source::Library(text) = &source {
             self.search.set(text.clone());
+        }
+        if settings.remember_row && row > 0 {
+            self.pending_row.set(Some(row));
         }
         self.open(source);
     }
 
-    fn remember(&self, source: &Source) {
-        if let Err(error) = memory::remember(source) {
+    /// Saves the view and its row for the next start, if they changed; the clock
+    /// calls it, so that moving through a list writes a few times a second at most.
+    pub(super) fn remember_view(&self) {
+        // Before the library shows, or while the saved row waits for its list, the
+        // list is not the user's yet.
+        if self.screen.get_untracked() != super::Screen::Library || self.pending_row.get().is_some()
+        {
+            return;
+        }
+        let source = self
+            .listing
+            .with_untracked(|listing| listing.source.clone());
+        let row = if config::get().interface.remember_row {
+            self.window.with_untracked(|window| window.selected)
+        } else {
+            0
+        };
+        let saved = memory::Saved::new(&source, row);
+        if self.remembered.borrow().as_ref() == Some(&saved) {
+            return;
+        }
+        let result = memory::remember(&saved);
+        // A failure is reported once for each view, not at every tick.
+        self.remembered.replace(Some(saved));
+        if let Err(error) = result {
             self.warn(format!("Cannot save this view for the next start: {error}"));
         }
     }
@@ -90,13 +123,17 @@ impl Jukebox {
         }
         self.to_end.set(false);
         let generation = self.next_generation();
-        self.remember(&source);
         self.listing.set(Listing::new(source.clone()));
         self.window.update(|window| window.select(0, 0));
         let (liked, artists) = (self.liked.clone(), self.artists.clone());
         let task = async move { resolve(&catalog, &source, &liked, &artists).await };
         self.load(generation, task, |jukebox, uris| {
+            let length = uris.len();
             jukebox.listing.update(|listing| listing.uris = uris.into());
+            // The row saved with the view, now that the list is known.
+            if let Some(row) = jukebox.pending_row.take() {
+                jukebox.window.update(|window| window.select(row, length));
+            }
             jukebox.load_more();
         });
     }
@@ -206,11 +243,12 @@ impl Jukebox {
     pub(super) fn search_typed(self: &Rc<Self>) {
         let edit = self.search_edits.get() + 1;
         self.search_edits.set(edit);
-        let delay = if self.searching_library() {
-            LIBRARY_TYPING_PAUSE
+        let settings = &crate::config::get().search;
+        let delay = std::time::Duration::from_millis(if self.searching_library() {
+            settings.library_delay_ms
         } else {
-            CATALOG_TYPING_PAUSE
-        };
+            settings.catalog_delay_ms
+        });
         let jukebox = self.clone();
         self.after(delay, move || {
             if jukebox.search_edits.get() == edit {

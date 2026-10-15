@@ -33,21 +33,21 @@
       <table>
         <thead>
           <tr>
-            <th class="number">#</th>
+            <th class="number" class:hidden="{{ !state.jukebox.column_shown(Column::Number) }}">#</th>
             <th class="title">Title</th>
-            <th class="artist">{{ state.jukebox.artist_heading() }}</th>
-            <th class="album">{{ state.jukebox.album_heading() }}</th>
-            <th class="length">Length</th>
+            <th class="artist" class:hidden="{{ !state.jukebox.column_shown(Column::Artist) }}">{{ state.jukebox.artist_heading() }}</th>
+            <th class="album" class:hidden="{{ !state.jukebox.column_shown(Column::Album) }}">{{ state.jukebox.album_heading() }}</th>
+            <th class="length" class:hidden="{{ !state.jukebox.column_shown(Column::Length) }}">Length</th>
           </tr>
         </thead>
         <tbody>
           <ForEach items="{{ state.jukebox.rows() }}" key="{{ |row| row.index }}">
             <tr class:selected="{{ item.get().selected }}" class:playing="{{ item.get().playing }}">
-              <td class="number" class:unavailable="{{ item.get().unavailable }}">{{ item.get().marker }}</td>
+              <td class="number" class:hidden="{{ !state.jukebox.column_shown(Column::Number) }}" class:unavailable="{{ item.get().unavailable }}">{{ item.get().marker }}</td>
               <td class="title" class:unavailable="{{ item.get().unavailable }}">{{ item.get().title }}</td>
-              <td class="artist" class:unavailable="{{ item.get().unavailable }}">{{ item.get().artist }}</td>
-              <td class="album" class:unavailable="{{ item.get().unavailable }}">{{ item.get().album }}</td>
-              <td class="length" class:unavailable="{{ item.get().unavailable }}">{{ item.get().length }}</td>
+              <td class="artist" class:hidden="{{ !state.jukebox.column_shown(Column::Artist) }}" class:unavailable="{{ item.get().unavailable }}">{{ item.get().artist }}</td>
+              <td class="album" class:hidden="{{ !state.jukebox.column_shown(Column::Album) }}" class:unavailable="{{ item.get().unavailable }}">{{ item.get().album }}</td>
+              <td class="length" class:hidden="{{ !state.jukebox.column_shown(Column::Length) }}" class:unavailable="{{ item.get().unavailable }}">{{ item.get().length }}</td>
             </tr>
           </ForEach>
         </tbody>

@@ -1,13 +1,16 @@
 use super::{Catalog, Error, Repeat, fade::Fader};
+use crate::config::{Autoplay, NormalisationType};
 use http::{HeaderMap, HeaderValue, Method, header::CONTENT_TYPE};
 use librespot_connect::{
     ConnectConfig, LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack,
     Spirc,
 };
-use librespot_core::{Session, SessionConfig, authentication::Credentials, config::DeviceType};
+use librespot_core::{
+    Session, SessionConfig, authentication::Credentials, cache::Cache, config::DeviceType,
+};
 use librespot_playback::{
     audio_backend,
-    config::{AudioFormat, PlayerConfig},
+    config::{AudioFormat, Bitrate, PlayerConfig},
     mixer::{self, MixerConfig},
     player::{Player, PlayerEvent, PlayerEventChannel},
 };
@@ -17,11 +20,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-/// The name this computer shows in every Spotify Connect device list.
-pub(crate) const DEVICE_NAME: &str = "Spotify";
-/// Full volume: the system mixer sets the loudness. librespot's volume curve is
-/// logarithmic over 60 dB, so half of the range already plays 30 dB quieter.
-pub(crate) const INITIAL_VOLUME: u16 = u16::MAX;
 /// How often a speaker checks that librespot still considers its session valid.
 const SESSION_CHECK: Duration = Duration::from_secs(1);
 
@@ -137,22 +135,25 @@ impl Drop for Speaker {
 }
 
 async fn start(access_token: String, events: Events, volume: u16) -> Result<Connection, Error> {
+    let settings = &crate::config::get().playback;
     let backend = audio_backend::find(None).ok_or(Error::NoAudio)?;
     let mixer = mixer::find(None).ok_or(Error::NoAudio)?(MixerConfig::default())?;
-    let session = Session::new(SessionConfig::default(), None);
+    let session = Session::new(session_config(), cache()?);
     let fader = Fader::default();
+    let output = Some(settings.output.clone()).filter(|output| !output.is_empty());
     let player = Player::new(
-        PlayerConfig::default(),
+        player_config(),
         session.clone(),
         fader.wrap(mixer.get_soft_volume()),
-        move || backend(None, AudioFormat::default()),
+        move || backend(output, AudioFormat::default()),
     );
     tokio::spawn(forward(player.get_player_event_channel(), events));
     #[cfg(target_os = "linux")]
     let media_events = player.get_player_event_channel();
     let config = ConnectConfig {
-        name: DEVICE_NAME.into(),
-        device_type: DeviceType::Computer,
+        name: settings.device_name.clone(),
+        // Checked with the settings.
+        device_type: settings.device_type.parse().unwrap_or(DeviceType::Computer),
         initial_volume: volume,
         ..ConnectConfig::default()
     };
@@ -164,7 +165,9 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
     tokio::spawn(watch_session(session.clone(), task, stopped, report));
     let spirc = Arc::new(spirc);
     #[cfg(target_os = "linux")]
-    super::mpris::publish(spirc.clone(), fader.clone(), media_events);
+    if crate::config::get().system.mpris {
+        super::mpris::publish(spirc.clone(), fader.clone(), media_events);
+    }
     Ok(Connection {
         speaker: Speaker {
             spirc,
@@ -175,6 +178,95 @@ async fn start(access_token: String, events: Events, volume: u16) -> Result<Conn
         catalog: Catalog::new(session),
         lost,
     })
+}
+
+fn player_config() -> PlayerConfig {
+    let settings = &crate::config::get().playback;
+    PlayerConfig {
+        bitrate: match settings.bitrate {
+            96 => Bitrate::Bitrate96,
+            160 => Bitrate::Bitrate160,
+            _ => Bitrate::Bitrate320,
+        },
+        gapless: settings.gapless,
+        normalisation: settings.normalisation,
+        normalisation_type: match settings.normalisation_type {
+            NormalisationType::Auto => librespot_playback::config::NormalisationType::Auto,
+            NormalisationType::Album => librespot_playback::config::NormalisationType::Album,
+            NormalisationType::Track => librespot_playback::config::NormalisationType::Track,
+        },
+        normalisation_pregain_db: settings.normalisation_pregain,
+        ..PlayerConfig::default()
+    }
+}
+
+fn session_config() -> SessionConfig {
+    SessionConfig {
+        device_id: device_id(),
+        autoplay: match crate::config::get().playback.autoplay {
+            Autoplay::Account => None,
+            Autoplay::On => Some(true),
+            Autoplay::Off => Some(false),
+        },
+        ..SessionConfig::default()
+    }
+}
+
+/// The same ID at every start, so that Spotify sees one device rather than a new
+/// one each time; a new one if it cannot be kept.
+fn device_id() -> String {
+    let fresh = || SessionConfig::default().device_id;
+    let Some(path) =
+        crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").map(|dir| dir.join("device-id"))
+    else {
+        return fresh();
+    };
+    if let Ok(id) = std::fs::read_to_string(&path)
+        && !id.trim().is_empty()
+    {
+        return id.trim().to_owned();
+    }
+    let id = fresh();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, &id));
+    }
+    id
+}
+
+/// The tracks played before, in `$XDG_CACHE_HOME/spt/audio`, if the settings keep them.
+fn cache() -> Result<Option<Cache>, Error> {
+    let settings = &crate::config::get().cache;
+    let Some(dir) = crate::config::xdg_dir("XDG_CACHE_HOME", ".cache").filter(|_| settings.enabled)
+    else {
+        return Ok(None);
+    };
+    let limit = settings.size_mb.saturating_mul(1024 * 1024);
+    let cache = Cache::new(
+        None,
+        None,
+        Some(dir.join("audio")),
+        Some(limit).filter(|limit| *limit > 0),
+    )?;
+    Ok(Some(cache))
+}
+
+/// The names of the audio outputs, as `playback.output` takes them.
+pub(crate) fn output_names() -> Result<Vec<String>, Error> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let devices = cpal::default_host()
+        .output_devices()
+        .map_err(|error| Error::Output(error.to_string()))?;
+    Ok(devices.filter_map(|device| device.name().ok()).collect())
+}
+
+/// Fails unless `output` is empty or names an output; librespot would crash on it.
+pub(crate) fn check_output(output: &str) -> Result<(), Error> {
+    if output.is_empty() || output_names()?.iter().any(|name| name == output) {
+        return Ok(());
+    }
+    Err(Error::Output(format!(
+        "no audio output is named \"{output}\"; spt devices lists them"
+    )))
 }
 
 /// Passes a player's events on until the player or the listener is gone.

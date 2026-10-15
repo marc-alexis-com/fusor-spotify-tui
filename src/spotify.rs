@@ -15,7 +15,7 @@ pub(crate) use model::{
     SearchItem, SearchKind, SearchResults, Track,
 };
 pub(crate) use speaker::{
-    Command, Connection, DEVICE_NAME, Events, INITIAL_VOLUME, Lost, Mode, Play, Speaker,
+    Command, Connection, Events, Lost, Mode, Play, Speaker, check_output, output_names,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +38,8 @@ pub(crate) enum Error {
     Keychain(#[from] keyring::Error),
     #[error("No audio output is available on this computer")]
     NoAudio,
+    #[error("Audio output: {0}")]
+    Output(String),
     #[error("Spotify did not send the artist's page ({0})")]
     Artist(String),
     #[error("Spotify search could not find artists, albums, playlists or podcasts ({0})")]

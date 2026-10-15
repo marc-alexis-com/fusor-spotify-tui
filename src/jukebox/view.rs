@@ -1,4 +1,5 @@
 use super::{Jukebox, Screen, listing::Source};
+use crate::config::Column;
 use crate::spotify::{Command, Repeat};
 use std::rc::Rc;
 

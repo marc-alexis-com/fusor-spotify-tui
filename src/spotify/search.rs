@@ -9,8 +9,6 @@ const SEARCH_OPERATION: &str = "searchDesktop";
 /// the songs still come from the search context then, and the other sections say
 /// that they are unavailable.
 const SEARCH_HASH: &str = "75bbf6bfcfdf85b8fc828417bfad92b7cd66bf7f556d85670f4da8292373ebec";
-/// Results in each section.
-pub(crate) const SECTION_LENGTH: usize = 8;
 
 #[derive(Deserialize)]
 struct Response {
@@ -83,8 +81,8 @@ impl Catalog {
         let variables = serde_json::json!({
             "searchTerm": text,
             "offset": 0,
-            "limit": SECTION_LENGTH,
-            "numberOfTopResults": SECTION_LENGTH,
+            "limit": crate::config::get().search.results,
+            "numberOfTopResults": crate::config::get().search.results,
             "includeAudiobooks": false,
             "includePreReleases": false,
             "includeAuthors": false,

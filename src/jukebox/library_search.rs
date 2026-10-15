@@ -7,8 +7,6 @@ use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 /// Tracks whose details load in one request.
 const CHUNK: usize = 100;
-/// Results in each box, as in a catalog search.
-const SECTION_LENGTH: usize = 8;
 
 /// The Liked Songs with their details, loaded once for library searches.
 pub(crate) type LikedCache = Rc<RefCell<Option<Rc<[Rc<Track>]>>>>;
@@ -83,7 +81,7 @@ pub(super) fn library_results(
         .flat_map(|track| &track.artists)
         .filter(|artist| matches(&artist.name))
         .filter_map(|artist| item(SearchKind::Artist, &artist.uri, &artist.name, String::new()))
-        .take(SECTION_LENGTH)
+        .take(crate::config::get().search.results)
         .collect();
     let albums = tracks
         .iter()
@@ -97,7 +95,7 @@ pub(super) fn library_results(
                 artists,
             )
         })
-        .take(SECTION_LENGTH)
+        .take(crate::config::get().search.results)
         .collect();
     let playlists = library
         .iter()
@@ -110,7 +108,7 @@ pub(super) fn library_results(
             ),
             _ => None,
         })
-        .take(SECTION_LENGTH)
+        .take(crate::config::get().search.results)
         .collect();
     SearchResults {
         artists,
@@ -163,11 +161,15 @@ impl Jukebox {
         let results = self
             .library
             .with(|library| library_results(&tracks, library, text));
-        let boxes = vec![
+        let shown = super::results::search_titles();
+        let boxes = [
             ("Artists", results.artists),
             ("Albums", results.albums),
             ("Playlists", results.playlists),
-        ];
+        ]
+        .into_iter()
+        .filter(|(title, _)| shown.contains(title))
+        .collect();
         Some(Found::Ready(text.to_owned(), Rc::new(boxes)))
     }
 }

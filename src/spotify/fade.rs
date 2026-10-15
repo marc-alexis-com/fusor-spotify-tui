@@ -6,8 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How long the sound takes to fade out before a pause, or in after a resume.
-const FADE: Duration = Duration::from_millis(150);
+/// How long the sound takes to fade out before a pause, or in after a resume;
+/// zero cuts at once.
+fn fade_length() -> Duration {
+    Duration::from_millis(crate::config::get().playback.fade_ms)
+}
 
 /// The share of the volume the player plays at, moving between two levels.
 #[derive(Clone, Default)]
@@ -35,7 +38,11 @@ impl Default for Ramp {
 
 impl Ramp {
     fn level(&self) -> f64 {
-        let progress = (self.start.elapsed().as_secs_f64() / FADE.as_secs_f64()).min(1.0);
+        let length = fade_length();
+        if length.is_zero() {
+            return self.to;
+        }
+        let progress = (self.start.elapsed().as_secs_f64() / length.as_secs_f64()).min(1.0);
         self.from + (self.to - self.from) * progress
     }
 
@@ -67,7 +74,7 @@ impl Fader {
         });
         let (fader, spirc) = (self.clone(), spirc.clone());
         tokio::spawn(async move {
-            tokio::time::sleep(FADE).await;
+            tokio::time::sleep(fade_length()).await;
             if fader.with(|ramp| ramp.generation) == generation {
                 // Nobody listens to a failed pause; the player reports what it does.
                 let _ = spirc.pause();
@@ -111,7 +118,7 @@ impl VolumeGetter for Faded {
 
 #[cfg(test)]
 mod tests {
-    use super::{FADE, Ramp};
+    use super::{Ramp, fade_length};
     use std::time::Instant;
 
     #[test]
@@ -119,9 +126,9 @@ mod tests {
         let mut ramp = Ramp::default();
         assert!((ramp.level() - 1.0).abs() < f64::EPSILON);
         let first = ramp.fade(1.0, 0.0);
-        ramp.start = Instant::now() - FADE / 2;
+        ramp.start = Instant::now() - fade_length() / 2;
         assert!((ramp.level() - 0.5).abs() < 0.05);
-        ramp.start = Instant::now() - FADE * 2;
+        ramp.start = Instant::now() - fade_length() * 2;
         assert!(ramp.level().abs() < f64::EPSILON);
         assert_ne!(ramp.fade(0.0, 1.0), first);
     }

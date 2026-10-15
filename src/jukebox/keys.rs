@@ -3,12 +3,12 @@ use super::{
     library::{FIXED_SHELVES, ShelfRow, ShelfTarget},
     playback::VolumeStep,
 };
-use crate::spotify::Command;
+use crate::{
+    config::{self, Action},
+    spotify::Command,
+};
 use hypercmd::{Error, ErrorKind, Event, EventPayload, Input, Key, Node};
 use std::rc::Rc;
-
-/// How long after a first `g` a second one still makes `gg`.
-const GG_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
 
 /// What `g` and `G` do in a list.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,7 +31,8 @@ impl Jukebox {
             }
             Key::Char('g') => {
                 let earlier = self.pending_g.take();
-                if earlier.is_some_and(|pressed| pressed.elapsed() < GG_DELAY) {
+                let delay = std::time::Duration::from_millis(config::get().keys.gg_delay_ms);
+                if earlier.is_some_and(|pressed| pressed.elapsed() < delay) {
                     Some(Jump::Top)
                 } else {
                     self.pending_g.set(Some(std::time::Instant::now()));
@@ -73,29 +74,94 @@ impl Jukebox {
         Ok(())
     }
 
-    /// Handles a single-key shortcut; returns whether `key` was one.
+    /// Handles a single-key shortcut of the settings; returns whether `key` was one.
     fn single_key(self: &Rc<Self>, key: Key) -> Result<bool, Error> {
-        match key {
-            Key::Char(' ') => self.toggle_play()?,
-            Key::Char('n') => self.command(Command::Next),
-            Key::Char('p') => self.command(Command::Previous),
-            Key::Right => self.seek_forward(),
-            Key::Left => self.seek_back(),
-            Key::Char('+' | '=') => self.change_volume(VolumeStep::Up),
-            Key::Char('-') => self.change_volume(VolumeStep::Down),
-            Key::Char('s') => self.toggle_shuffle(),
-            Key::Char('r') => self.cycle_repeat(),
-            Key::Char('o') => self.open_album(),
-            Key::Char('a') => self.open_artist(),
-            Key::Char('z') => self.queue_selected()?,
-            Key::Char('/') => self.start_search(),
-            Key::Char('?') => self.open_help(),
-            Key::Char('f') => self.start_library_search(),
-            Key::Char('q') => quit()?,
-            Key::Escape | Key::Backspace => return Ok(self.back()),
-            _ => return Ok(false),
+        let Some(action) = config::get().keys.action(key) else {
+            return Ok(false);
+        };
+        match action {
+            Action::PlayPause => self.toggle_play()?,
+            Action::Next => self.command(Command::Next),
+            Action::Previous => self.command(Command::Previous),
+            Action::SeekForward => self.seek_forward(),
+            Action::SeekBack => self.seek_back(),
+            Action::VolumeUp => self.change_volume(VolumeStep::Up),
+            Action::VolumeDown => self.change_volume(VolumeStep::Down),
+            Action::Shuffle => self.toggle_shuffle(),
+            Action::Repeat => self.cycle_repeat(),
+            Action::OpenAlbum => self.open_album(),
+            Action::OpenArtist => self.open_artist(),
+            Action::Queue => self.queue_selected()?,
+            Action::Search => self.start_search(),
+            Action::LibrarySearch => self.start_library_search(),
+            Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::Help => self.open_help(),
+            Action::Quit => quit()?,
+            Action::Back => return Ok(self.back()),
         }
         Ok(true)
+    }
+
+    /// Shows or hides the sidebar; hidden, it gives the focus back to the list.
+    pub(super) fn toggle_sidebar(&self) {
+        let shown = !self.sidebar.get_untracked();
+        self.sidebar.set(shown);
+        if !shown {
+            self.focus("tracks");
+        }
+    }
+
+    /// The keys of the help, from the settings.
+    pub(super) fn help_text(&self) -> String {
+        let settings = config::get();
+        let mut lines: Vec<(String, &str)> = settings
+            .keys
+            .bindings()
+            .iter()
+            .filter(|(_, names, _)| !names.is_empty())
+            .map(|(_, names, description)| {
+                let keys: Vec<String> = names.iter().map(|name| config::key_label(name)).collect();
+                (keys.join(" "), *description)
+            })
+            .collect();
+        lines.extend([
+            ("↑ ↓  j k".to_owned(), "choose a row"),
+            ("gg / G".to_owned(), "first / last row"),
+            ("Enter".to_owned(), "play the row"),
+            ("Tab  h l".to_owned(), "sidebar ⇄ list, search boxes"),
+            ("^F".to_owned(), "search"),
+        ]);
+        let width = lines
+            .iter()
+            .map(|(keys, _)| keys.chars().count())
+            .max()
+            .unwrap_or(0);
+        let column = |(keys, description): &(String, &str)| {
+            format!(
+                "{keys}{}  {description}",
+                " ".repeat(width - keys.chars().count())
+            )
+        };
+        let half = lines.len().div_ceil(2);
+        let left_width = lines[..half]
+            .iter()
+            .map(|line| column(line).chars().count())
+            .max()
+            .unwrap_or(0);
+        (0..half)
+            .map(|row| {
+                let left = column(&lines[row]);
+                match lines.get(row + half) {
+                    Some(right) => format!(
+                        "{left}{}   {}",
+                        " ".repeat(left_width - left.chars().count()),
+                        column(right)
+                    ),
+                    None => left,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Tab or `l` leaves the sidebar for the track list instead of visiting every
@@ -146,6 +212,9 @@ impl Jukebox {
 
     /// `h` in the track list goes to the shelf that list comes from, or the first one.
     pub(super) fn enter_shelves(&self) {
+        if !self.sidebar.get_untracked() {
+            return;
+        }
         let shelves = self.shelves();
         let current = shelves.iter().find(|shelf| {
             shelf
