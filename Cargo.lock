@@ -1052,6 +1052,7 @@ dependencies = [
  "signal-hook",
  "thiserror 2.0.21",
  "tokio",
+ "toml",
  "zbus 5.19.0",
 ]
 

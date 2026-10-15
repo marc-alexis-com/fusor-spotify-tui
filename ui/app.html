@@ -4,6 +4,9 @@
       <Welcome jukebox="{{ state.clone() }}"></Welcome>
     </If>
     <If condition="{{ state.screen.get() == Screen::Library }}">
+      <If condition="{{ state.player_on_top() }}">
+        <PlayerBar jukebox="{{ state.clone() }}"></PlayerBar>
+      </If>
       <div class="body" class:hidden="{{ state.help.get() }}">
         <Shelves jukebox="{{ state.clone() }}"></Shelves>
         <TrackList jukebox="{{ state.clone() }}"></TrackList>
@@ -11,7 +14,9 @@
       <If condition="{{ state.help.get() }}">
         <Help jukebox="{{ state.clone() }}"></Help>
       </If>
-      <PlayerBar jukebox="{{ state.clone() }}"></PlayerBar>
+      <If condition="{{ !state.player_on_top() }}">
+        <PlayerBar jukebox="{{ state.clone() }}"></PlayerBar>
+      </If>
       <p class="notice" class:error="{{ state.notice_is_error() }}">{{ state.notice_text() }}</p>
     </If>
   </main>

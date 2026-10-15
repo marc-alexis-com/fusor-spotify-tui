@@ -1,7 +1,9 @@
+mod config;
 mod cover;
 mod icons;
 mod jukebox;
 mod spotify;
+mod theme;
 
 use jukebox::{Jukebox, Startup};
 use std::process::ExitCode;
@@ -57,6 +59,8 @@ fn dispatch() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Before the terminal changes, so that a mistake in the settings prints plainly.
+    let config = config::load()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -64,8 +68,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let startup = Startup {
         http: reqwest::Client::new(),
         refresh_token: spotify::stored_refresh_token()?,
+        player: config.layout.player,
     };
-    hypercmd::native::run(hypercmd::mount::<Jukebox>(startup)?)?;
+    let options = hypercmd::native::NativeOptions {
+        layout: hypercmd::layout::LayoutOptions {
+            overrides: theme::stylesheet(&config),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    hypercmd::native::run_with(hypercmd::mount::<Jukebox>(startup)?, &options)?;
     if cover::supported() {
         // kitty keeps an image until told otherwise, even once the player is gone.
         cover::clear(cover::Slot::Player)?;

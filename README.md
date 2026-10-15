@@ -115,7 +115,7 @@ its artist; Escape goes back.
 
 ### Control playback
 
-The bar at the bottom shows what's playing. Use its buttons or the keyboard to
+The player bar, at the bottom or the top (see [Settings](#settings)), shows what's playing. Use its buttons or the keyboard to
 pause, skip, seek, change volume, shuffle, or cycle repeat modes. Press `z` to
 add the selected track to the queue; queued tracks play after the current one.
 While `spt` runs, other Spotify apps list this computer as **Spotify**, so
@@ -166,6 +166,31 @@ buttons, or scroll the track list with the mouse wheel.
 Single-key shortcuts apply outside text inputs.
 
 </details>
+
+### Settings
+
+Colors, corners and the place of the player bar come from
+`$XDG_CONFIG_HOME/spt/config.toml` (`~/.config/spt/config.toml`). The file and
+each setting are optional; what is left out keeps Spotify's look:
+
+```toml
+[layout]
+player = "bottom"   # or "top": the player bar above the library
+borders = "rounded" # or "square"
+
+[theme]             # #rrggbb, or "default" for the terminal's own color
+background = "#121212"
+text = "#FFFFFF"        # titles, the focused row
+subtext = "#B3B3B3"     # artists, albums, lengths, the sidebar
+muted = "#6A6A6A"       # column headings, notes
+unavailable = "#535353" # tracks Spotify cannot play; the border while paused
+surface = "#2A2A2A"     # the selected row, borders without the focus
+bar = "#3E3E3E"         # the rest of the progress bar, the search field
+accent = "#1DB954"      # what plays, what has the focus, what is on
+error = "#F15E6C"
+```
+
+`spt` reads the file when it starts, and refuses to start on a mistake in it.
 
 ## How it works
 

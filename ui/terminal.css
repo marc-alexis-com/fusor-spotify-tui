@@ -1,9 +1,10 @@
-main { height: 100%; color: #FFFFFF; background-color: #121212; }
+/* Colors come from src/theme.rs, which the settings change at startup; only the
+   covers' stay here, since they are image IDs. */
+main { height: 100%; }
 button { font-weight: normal; }
-button:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: underline; }
+button:focus { text-decoration: underline; }
 .hidden { display: none; }
-.error { color: #F15E6C; }
-.placeholder { color: #6A6A6A; font-style: italic; }
+.placeholder { font-style: italic; }
 
 .welcome {
   height: 100%;
@@ -14,13 +15,9 @@ button:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: under
   overflow: auto;
 }
 .welcome-card { width: 60ch; max-width: 100%; align-items: center; gap: 1ch; }
-.welcome-logo { color: #1DB954; }
-.welcome-title { color: #FFFFFF; }
-.welcome-tagline, .welcome-note, .welcome-hint { color: #B3B3B3; }
-.welcome-note { color: #6A6A6A; }
 .welcome-status { white-space: normal; }
-.primary { color: #121212; background-color: #1DB954; font-weight: bold; padding: 0 2ch; }
-.primary:focus { color: #121212; background-color: #1ED760; text-decoration: none; }
+.primary { font-weight: bold; padding: 0 2ch; }
+.primary:focus { text-decoration: none; }
 
 .body { flex-direction: row; flex-grow: 1; flex-shrink: 1; min-height: 0; }
 .shelves {
@@ -28,62 +25,50 @@ button:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: under
   flex-shrink: 0;
   min-height: 0;
   border-style: rounded;
-  border-color: #2A2A2A;
 }
-/* hypercmd has no :focus-within; the shelves report their focus instead. */
-.shelves.active { border-color: #1DB954; }
-.pane-title { height: 1ch; padding: 0 1ch; color: #6A6A6A; }
+.pane-title { height: 1ch; padding: 0 1ch; }
 .playlists-title { padding: 1ch 1ch 0 1ch; height: 2ch; }
-.shelf { height: 1ch; padding: 0 1ch; white-space: pre; overflow: hidden; color: #B3B3B3; }
-.shelf:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: none; }
-.folder { color: #FFFFFF; }
-.current { color: #1DB954; font-weight: bold; }
+.shelf { height: 1ch; padding: 0 1ch; white-space: pre; overflow: hidden; }
+.shelf:focus { text-decoration: none; }
+.current { font-weight: bold; }
 #playlists { flex-grow: 1; flex-shrink: 1; min-height: 0; overflow: auto; }
 
 .listing { flex-grow: 1; flex-shrink: 1; min-width: 0; min-height: 0; padding: 0 1ch; }
 .listing-heading { flex-direction: row; height: 1ch; gap: 2ch; padding: 0 1ch; }
 .listing-title { flex-grow: 1; flex-shrink: 1; min-width: 0; white-space: pre; overflow: hidden; }
-.listing-summary { color: #B3B3B3; white-space: pre; }
+.listing-summary { white-space: pre; }
 .header { flex-direction: row; height: 6ch; flex-shrink: 0; gap: 2ch; padding: 0 1ch 1ch 1ch; }
 /* Its color is the image ID of the kitty placeholders: see src/cover.rs. */
 /* As wide as its rows of placeholders, which make it square: see src/cover.rs. */
 .header-cover { height: 5ch; flex-shrink: 0; }
 .header-cover-row { height: 1ch; white-space: pre; color: #5F87D7; }
 .header-text { flex-grow: 1; flex-shrink: 1; min-width: 0; justify-content: center; }
-.header-kind { height: 1ch; color: #B3B3B3; }
+.header-kind { height: 1ch; }
 .header-name { height: 1ch; white-space: pre; overflow: hidden; }
-.header-detail { height: 1ch; color: #B3B3B3; white-space: pre; overflow: hidden; }
-.header-byline { height: 1ch; color: #B3B3B3; white-space: pre; overflow: hidden; }
-input { width: 100%; height: 3ch; border-style: rounded; border-color: #3E3E3E; padding: 0 1ch; }
-input:focus { border-color: #1DB954; }
+.header-detail { height: 1ch; white-space: pre; overflow: hidden; }
+.header-byline { height: 1ch; white-space: pre; overflow: hidden; }
+input { width: 100%; height: 3ch; border-style: rounded; padding: 0 1ch; }
 #tracks {
   flex-grow: 1;
   flex-shrink: 1;
   min-height: 0;
   overflow: auto;
   border-style: rounded;
-  border-color: #2A2A2A;
   padding: 0 1ch;
 }
-#tracks:focus { border-color: #1DB954; }
 #tracks { flex-direction: row; gap: 1ch; }
 .tracks-main { flex-grow: 1; flex-shrink: 1; min-width: 0; min-height: 0; }
 /* Starts below the column headings, beside the rows. */
 .scrollbar { width: 1ch; flex-shrink: 0; padding: 1ch 0 0 0; }
-.scroll-track { color: #2A2A2A; }
-.scroll-thumb { color: #B3B3B3; }
 tr { height: 1ch; }
-th { color: #6A6A6A; font-weight: normal; }
+th { font-weight: normal; }
 th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
-.number { width: 5ch; flex-shrink: 0; color: #6A6A6A; }
+.number { width: 5ch; flex-shrink: 0; }
 .title { width: 0; flex-grow: 3; flex-shrink: 1; min-width: 0; }
-.artist, .album { width: 0; flex-grow: 2; flex-shrink: 1; min-width: 0; color: #B3B3B3; }
-.length { width: 8ch; flex-shrink: 0; color: #B3B3B3; }
-.selected { background-color: #2A2A2A; }
-.playing { color: #1DB954; font-weight: bold; }
-/* Every cell of a track Spotify cannot play here, as Spotify's apps gray them. */
-.unavailable { color: #535353; }
-.empty { padding: 1ch; color: #B3B3B3; }
+.artist, .album { width: 0; flex-grow: 2; flex-shrink: 1; min-width: 0; }
+.length { width: 8ch; flex-shrink: 0; }
+.playing { font-weight: bold; }
+.empty { padding: 1ch; }
 .results { flex-direction: row; height: 10ch; flex-shrink: 0; gap: 1ch; }
 .results-box {
   width: 0;
@@ -91,34 +76,22 @@ th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
   flex-shrink: 1;
   min-width: 0;
   border-style: rounded;
-  border-color: #2A2A2A;
   padding: 0 1ch;
 }
-.results-box.active { border-color: #1DB954; }
-.results-title { height: 1ch; color: #6A6A6A; }
+.results-title { height: 1ch; }
 .results-rows { flex-grow: 1; flex-shrink: 1; min-height: 0; overflow: auto; }
-.result { height: 1ch; padding: 0; white-space: pre; overflow: hidden; color: #B3B3B3; }
-.result:focus { color: #FFFFFF; background-color: #2A2A2A; text-decoration: none; }
-.results-note { height: 1ch; flex-shrink: 0; color: #6A6A6A; white-space: pre; overflow: hidden; }
+.result { height: 1ch; padding: 0; white-space: pre; overflow: hidden; }
+.result:focus { text-decoration: none; }
+.results-note { height: 1ch; flex-shrink: 0; white-space: pre; overflow: hidden; }
 
 .now-playing {
   height: 5ch;
   flex-shrink: 0;
   border-style: rounded;
-  border-color: #1DB954;
   padding: 0 1ch;
   flex-direction: row;
   gap: 1ch;
 }
-/* The border fades from green to gray when music pauses: see run_frames. */
-.paused1 { border-color: #24AC54; }
-.paused2 { border-color: #2AA054; }
-.paused3 { border-color: #319354; }
-.paused4 { border-color: #388654; }
-.paused5 { border-color: #3F7953; }
-.paused6 { border-color: #466C53; }
-.paused7 { border-color: #4C6053; }
-.paused8 { border-color: #535353; }
 /* Its color is the image ID of the kitty placeholders: see src/cover.rs. */
 .cover { height: 3ch; flex-shrink: 0; }
 .cover-row { height: 1ch; white-space: pre; color: #5F87AF; }
@@ -129,30 +102,17 @@ th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
 .side { width: 0; flex-grow: 1; flex-shrink: 1; min-width: 0; align-items: flex-end; }
 .modes { flex-direction: row; height: 1ch; gap: 2ch; }
 .track-title { height: 1ch; font-weight: bold; white-space: pre; overflow: hidden; }
-.track-details { height: 1ch; color: #B3B3B3; white-space: pre; overflow: hidden; }
+.track-details { height: 1ch; white-space: pre; overflow: hidden; }
 .controls { flex-direction: row; height: 1ch; gap: 2ch; flex-shrink: 0; }
-.control { color: #B3B3B3; }
-.play { color: #FFFFFF; font-weight: bold; }
-.on { color: #1DB954; }
+.play { font-weight: bold; }
 .progress-line { flex-direction: row; height: 1ch; gap: 1ch; }
-.time { width: 7ch; flex-shrink: 0; color: #B3B3B3; white-space: pre; }
+.time { width: 7ch; flex-shrink: 0; white-space: pre; }
 .time-end { width: 8ch; padding: 0 0 0 1ch; }
 .bar { flex-grow: 1; flex-shrink: 1; min-width: 0; }
 .bar-text { white-space: pre; overflow: hidden; }
-.played { color: #1DB954; }
-.left { color: #3E3E3E; }
-/* The edge cell of the progress bar, from gray to green in eighths. */
-.edge1 { color: #3A4D41; }
-.edge2 { color: #365D44; }
-.edge3 { color: #326C46; }
-.edge4 { color: #2E7C49; }
-.edge5 { color: #298B4C; }
-.edge6 { color: #259A4E; }
-.edge7 { color: #21AA51; }
 .volume { height: 1ch; max-width: 100%; white-space: pre; overflow: hidden; padding: 0 1ch 0 0; }
-.volume-icon { color: #B3B3B3; }
 
-.notice { height: 1ch; padding: 0 1ch; white-space: pre; overflow: hidden; color: #1DB954; }
+.notice { height: 1ch; padding: 0 1ch; white-space: pre; overflow: hidden; }
 
 .overlay {
   flex-grow: 1;
@@ -169,11 +129,9 @@ th, td { padding: 0 1ch 0 0; white-space: pre; overflow: hidden; }
   min-height: 0;
   flex-shrink: 1;
   border-style: rounded;
-  border-color: #1DB954;
   padding: 0 1ch;
   gap: 1ch;
 }
 .dialog-heading { flex-direction: row; height: 1ch; }
 .dialog-title { flex-grow: 1; }
-.dialog-hint { color: #B3B3B3; }
-.keys { color: #FFFFFF; overflow: auto; }
+.keys { overflow: auto; }

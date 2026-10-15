@@ -10,6 +10,7 @@ mod results;
 mod session;
 mod view;
 
+use crate::config::PlayerPosition;
 use crate::spotify::{self, Catalog, LibraryEntry, Speaker};
 use fusor::{FromInputs, OwnerHandle, Signal, signal};
 use header::Header;
@@ -30,6 +31,7 @@ const NOTICE_TICKS: usize = 16;
 pub(crate) struct Startup {
     pub(crate) http: reqwest::Client,
     pub(crate) refresh_token: Option<String>,
+    pub(crate) player: PlayerPosition,
 }
 
 #[derive(Clone, PartialEq)]
@@ -111,6 +113,8 @@ pub(crate) struct Jukebox {
     shelves_focused: Signal<bool>,
     notice: Signal<Option<Notice>>,
     root: RefCell<Option<Node>>,
+    /// Whether the player bar sits above the library or below it.
+    player: PlayerPosition,
     saved_login: RefCell<Option<String>>,
 }
 
@@ -162,6 +166,7 @@ impl FromInputs for Jukebox {
             shelves_focused: signal(false),
             notice: signal(None),
             root: RefCell::new(None),
+            player: startup.player,
             saved_login: RefCell::new(startup.refresh_token),
         })
     }
@@ -210,6 +215,10 @@ impl Jukebox {
                 .as_ref()
                 .is_some_and(|notice| notice.tone == Tone::Error)
         })
+    }
+
+    fn player_on_top(&self) -> bool {
+        self.player == PlayerPosition::Top
     }
 
     fn focus(&self, id: &str) {
