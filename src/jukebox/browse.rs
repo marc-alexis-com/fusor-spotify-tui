@@ -2,6 +2,7 @@ use super::{
     Jukebox, Tone,
     keys::Jump,
     listing::{Listing, Loading, Row, Source},
+    memory,
 };
 use super::{
     artist::{ArtistCache, artist_tracks},
@@ -51,6 +52,7 @@ impl Jukebox {
             listing.rewind();
         }
         let resume = interrupted || listing.can_load_more();
+        self.remember(&listing.source);
         self.listing.set(listing);
         // The saved height may be stale; the list keeps its size, so no resize follows.
         // A taller window may now reach past the loaded rows.
@@ -59,6 +61,21 @@ impl Jukebox {
             self.load_more();
         }
         true
+    }
+
+    /// Opens the view shown when the player last closed, or Liked Songs.
+    pub(super) fn open_last_view(self: &Rc<Self>) {
+        let source = memory::recall().unwrap_or(Source::Liked);
+        if let Source::Search(text) | Source::Library(text) = &source {
+            self.search.set(text.clone());
+        }
+        self.open(source);
+    }
+
+    fn remember(&self, source: &Source) {
+        if let Err(error) = memory::remember(source) {
+            self.warn(format!("Cannot save this view for the next start: {error}"));
+        }
     }
 
     fn show(self: &Rc<Self>, source: Source) {
@@ -73,6 +90,7 @@ impl Jukebox {
         }
         self.to_end.set(false);
         let generation = self.next_generation();
+        self.remember(&source);
         self.listing.set(Listing::new(source.clone()));
         self.window.update(|window| window.select(0, 0));
         let (liked, artists) = (self.liked.clone(), self.artists.clone());

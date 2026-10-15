@@ -169,6 +169,10 @@ Single-key shortcuts apply outside text inputs.
 
 ### Settings
 
+`spt` reopens the view it showed when it closed: a playlist, an album, an
+artist, a search. It keeps it in `$XDG_STATE_HOME/spt/view.json`
+(`~/.local/state/spt/view.json`); without it, `spt` opens Liked Songs.
+
 Colors, corners and the place of the player bar come from
 `$XDG_CONFIG_HOME/spt/config.toml` (`~/.config/spt/config.toml`). The file and
 each setting are optional; what is left out keeps Spotify's look:

@@ -1,4 +1,4 @@
-use super::{Jukebox, Screen, listing::Source};
+use super::{Jukebox, Screen};
 use crate::spotify::{self, Authorization, INITIAL_VOLUME, Speaker, Token};
 use hypercmd::{Error, Event};
 use std::{
@@ -103,7 +103,7 @@ impl Jukebox {
             self.warn(format!("Cannot watch the connection to Spotify: {error}"));
         }
         self.load_playlists();
-        self.open(Source::Liked);
+        self.open_last_view();
         self.focus("tracks");
         Ok(())
     }

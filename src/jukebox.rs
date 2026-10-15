@@ -5,6 +5,7 @@ mod keys;
 mod library;
 mod library_search;
 mod listing;
+mod memory;
 mod playback;
 mod results;
 mod session;
